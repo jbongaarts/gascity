@@ -555,7 +555,7 @@ EOF
 echo "$config" | "$SCRIPT" start "${SESSION}-tmuxsetup"
 # Verify the option was applied to the in-container "agent" session.
 got=$(docker exec -e "TMUX_TMPDIR=/run/gc-tmux" "${SESSION}-tmuxsetup" \
-    tmux -u show-options -t agent -v status-right 2>/dev/null || echo "")
+    tmux -u show-options -t main -v status-right 2>/dev/null || echo "")
 check_contains "tmux target rewritten to in-container session" "DOCKER_SETUP_OK" "$got"
 "$SCRIPT" stop "${SESSION}-tmuxsetup" 2>/dev/null || true
 

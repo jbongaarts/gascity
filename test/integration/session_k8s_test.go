@@ -3,6 +3,7 @@
 package integration
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sync/atomic"
@@ -48,7 +49,7 @@ func TestK8sSessionConformance(t *testing.T) {
 	t.Run("SharedSession", func(t *testing.T) {
 		name := "gc-k8s-shared"
 		cfg := session.Config{Command: "sleep 300", WorkDir: "/tmp"}
-		if err := p.Start(name, cfg); err != nil {
+		if err := p.Start(context.Background(), name, cfg); err != nil {
 			t.Fatalf("Start shared session: %v", err)
 		}
 		t.Cleanup(func() { _ = p.Stop(name) })
