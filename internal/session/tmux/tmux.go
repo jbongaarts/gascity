@@ -267,8 +267,25 @@ func (t *Tmux) NewSessionWithCommandAndEnv(name, workDir, command string, env ma
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	var unsetKeys []string
 	for _, k := range keys {
-		args = append(args, "-e", fmt.Sprintf("%s=%s", k, env[k]))
+		if env[k] == "" {
+			// Empty values mean "unset this var". Collect for env -u prefix.
+			unsetKeys = append(unsetKeys, k)
+		} else {
+			args = append(args, "-e", fmt.Sprintf("%s=%s", k, env[k]))
+		}
+	}
+	// For vars that need unsetting, prefix the command with env -u flags.
+	// tmux -e sets session-level env but the shell process still inherits
+	// from the tmux server's global environment. env -u ensures the var
+	// is actually absent from the child process.
+	if len(unsetKeys) > 0 && command != "" {
+		var prefix string
+		for _, k := range unsetKeys {
+			prefix += " -u " + k
+		}
+		command = "env" + prefix + " " + command
 	}
 	// Add the command as the last argument
 	args = append(args, command)
