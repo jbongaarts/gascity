@@ -20,7 +20,6 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/api"
-	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
@@ -277,15 +276,15 @@ func gracefulStopAll(
 	}
 }
 
-// controllerLoop runs reconciliation periodically until ctx is canceled.
-// buildFn is called on each tick to re-evaluate the desired agent set
-// (pool check commands are re-run). If tomlPath is non-empty, the loop
-// watches config directories for changes and reloads config on the next tick.
-// watchDirs is the initial set of directories to watch; it is updated on
-// config reload.
+// controllerLoop is a compatibility shim that wraps CityRuntime.run().
+// Tests and runController use this entry point to preserve the existing
+// call signature during the Phase 0 extraction. It will be removed once
+// callers migrate to CityRuntime directly.
+//
+//nolint:unparam // compatibility shim — many params are nil in tests but varied in runController
 func controllerLoop(
 	ctx context.Context,
-	interval time.Duration,
+	interval time.Duration, // overrides cfg patrol interval when non-zero (used by tests)
 	cfg *config.City,
 	cityName string,
 	tomlPath string,
@@ -305,203 +304,37 @@ func controllerLoop(
 	cs *controllerState, // nil when API disabled
 	stdout, stderr io.Writer,
 ) {
-	dirty := &atomic.Bool{}
+	var cityPath string
 	if tomlPath != "" {
-		// Fall back to watching the directory containing city.toml if no
-		// explicit watch dirs were provided.
-		dirs := watchDirs
-		if len(dirs) == 0 {
-			dirs = []string{filepath.Dir(tomlPath)}
-		}
-		cleanup := watchConfigDirs(dirs, dirty, stderr)
-		defer cleanup()
+		cityPath = filepath.Dir(tomlPath)
 	}
-
-	// Track effective provider name for hot-reload detection.
-	// GC_SESSION env var overrides config — if set, config changes won't trigger a swap.
-	lastProviderName := cfg.Session.Provider
-	if v := os.Getenv("GC_SESSION"); v != "" {
-		lastProviderName = v
+	// Allow callers (tests) to override the patrol interval.
+	if interval > 0 {
+		cfg.Daemon.PatrolInterval = interval.String()
 	}
-
-	// Compute observation search paths for agent event bridging.
-	observePaths := observeSearchPaths(cfg.Daemon.ObservePaths)
-
-	// Initial reconciliation.
-	agents := buildFn(cfg, sp)
-	doReconcileAgents(agents, sp, rops, dops, ct, it, rec, poolSessions, suspendedNames, cfg.Daemon.DriftDrainTimeoutDuration(), cfg.Session.StartupTimeoutDuration(), stdout, stderr, ctx)
-	ensureObservers(agents, observePaths, rec)
-	fmt.Fprintln(stdout, "City started.") //nolint:errcheck // best-effort stdout
-
-	cityRoot := filepath.Dir(tomlPath)
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	// Track pool instance liveness for death detection.
-	// nil on first tick — on_boot already handled startup orphans.
-	var prevPoolRunning map[string]bool
-
-	for {
-		select {
-		case <-ticker.C:
-			// Detect pool instance deaths since last tick.
-			if len(poolDeathHandlers) > 0 {
-				currentRunning, _ := rops.listRunning("")
-				currentSet := make(map[string]bool, len(currentRunning))
-				for _, name := range currentRunning {
-					currentSet[name] = true
-				}
-				if prevPoolRunning != nil {
-					for sn, info := range poolDeathHandlers {
-						if prevPoolRunning[sn] && !currentSet[sn] {
-							if _, err := shellScaleCheck(info.Command, info.Dir); err != nil {
-								fmt.Fprintf(stderr, "on_death %s: %v\n", sn, err) //nolint:errcheck // best-effort stderr
-							}
-						}
-					}
-				}
-				prevPoolRunning = make(map[string]bool)
-				for sn := range poolDeathHandlers {
-					if currentSet[sn] {
-						prevPoolRunning[sn] = true
-					}
-				}
-			}
-			if dirty.Swap(false) {
-				result, err := tryReloadConfig(tomlPath, cityName, cityRoot, stderr)
-				if err != nil {
-					fmt.Fprintf(stderr, "gc start: config reload: %v (keeping old config)\n", err) //nolint:errcheck // best-effort stderr
-					telemetry.RecordConfigReload(ctx, "", err)
-				} else {
-					oldAgentCount := len(cfg.Agents)
-					oldRigCount := len(cfg.Rigs)
-					cfg = result.Cfg
-					// Detect session provider change.
-					newProviderName := cfg.Session.Provider
-					if v := os.Getenv("GC_SESSION"); v != "" {
-						newProviderName = v // env always wins — no swap when env is set
-					}
-					if newProviderName != lastProviderName {
-						// Stop all agents on the current provider.
-						if running, lErr := rops.listRunning(""); lErr == nil && len(running) > 0 {
-							fmt.Fprintf(stdout, "Provider changed (%s → %s), stopping %d agent(s)...\n", //nolint:errcheck // best-effort stdout
-								displayProviderName(lastProviderName), displayProviderName(newProviderName), len(running))
-							gracefulStopAll(running, sp, cfg.Daemon.ShutdownTimeoutDuration(), rec, stdout, stderr)
-						}
-						// Construct new provider.
-						newSp, spErr := newSessionProviderByName(newProviderName, cfg.Session, cityName)
-						if spErr != nil {
-							fmt.Fprintf(stderr, "gc start: new session provider %q: %v (keeping old provider)\n", //nolint:errcheck // best-effort stderr
-								newProviderName, spErr)
-						} else {
-							sp = newSp
-							rops = newReconcileOps(sp)
-							dops = newDrainOps(sp)
-							rec.Record(events.Event{
-								Type:    events.ProviderSwapped,
-								Actor:   "gc",
-								Message: fmt.Sprintf("%s → %s", displayProviderName(lastProviderName), displayProviderName(newProviderName)),
-							})
-							fmt.Fprintf(stdout, "Session provider swapped to %s.\n", displayProviderName(newProviderName)) //nolint:errcheck // best-effort stdout
-							lastProviderName = newProviderName
-						}
-					}
-					// Re-materialize and prepend system formulas (not included in LoadWithIncludes).
-					sysDir, _ := MaterializeSystemFormulas(systemFormulasFS, "system_formulas", cityRoot)
-					if sysDir != "" {
-						cfg.FormulaLayers.City = append([]string{sysDir}, cfg.FormulaLayers.City...)
-						for rigName, layers := range cfg.FormulaLayers.Rigs {
-							cfg.FormulaLayers.Rigs[rigName] = append([]string{sysDir}, layers...)
-						}
-					}
-					// Validate rigs (prefix collisions, missing fields).
-					if err := config.ValidateRigs(cfg.Rigs, cityName); err != nil {
-						fmt.Fprintf(stderr, "gc start: config reload: %v\n", err) //nolint:errcheck // best-effort stderr
-					}
-					// Resolve rig paths and init beads for any new/changed rigs.
-					resolveRigPaths(cityRoot, cfg.Rigs)
-					if err := startBeadsLifecycle(cityRoot, cityName, cfg, stderr); err != nil {
-						fmt.Fprintf(stderr, "gc start: config reload: %v\n", err) //nolint:errcheck // best-effort stderr
-					}
-					// Resolve formula symlinks for newly activated packs.
-					if len(cfg.FormulaLayers.City) > 0 {
-						if err := ResolveFormulas(cityRoot, cfg.FormulaLayers.City); err != nil {
-							fmt.Fprintf(stderr, "gc start: config reload: city formulas: %v\n", err) //nolint:errcheck // best-effort stderr
-						}
-					}
-					for _, r := range cfg.Rigs {
-						if layers, ok := cfg.FormulaLayers.Rigs[r.Name]; ok && len(layers) > 0 {
-							if err := ResolveFormulas(r.Path, layers); err != nil {
-								fmt.Fprintf(stderr, "gc start: config reload: rig %q formulas: %v\n", r.Name, err) //nolint:errcheck // best-effort stderr
-							}
-						}
-					}
-					poolSessions = computePoolSessions(cfg, cityName, sp)
-					poolDeathHandlers = computePoolDeathHandlers(cfg, cityName, cityRoot, sp)
-					suspendedNames = computeSuspendedNames(cfg, cityName, cityRoot)
-					// Rebuild crash tracker only if config values changed.
-					newMaxR := cfg.Daemon.MaxRestartsOrDefault()
-					newWindow := cfg.Daemon.RestartWindowDuration()
-					switch {
-					case newMaxR <= 0:
-						ct = nil
-					case ct == nil:
-						ct = newCrashTracker(newMaxR, newWindow)
-					default:
-						// Compare against existing tracker limits; rebuild if changed.
-						oldMaxR, oldWindow := ct.limits()
-						if newMaxR != oldMaxR || newWindow != oldWindow {
-							ct = newCrashTracker(newMaxR, newWindow)
-						}
-					}
-					// Update API state with new crash tracker.
-					if cs != nil {
-						cs.mu.Lock()
-						cs.ct = ct
-						cs.mu.Unlock()
-					}
-					// Rebuild idle tracker with new config timeouts.
-					it = buildIdleTracker(cfg, cityName, sp)
-					// Rebuild wisp GC from new config.
-					if cfg.Daemon.WispGCEnabled() {
-						wg = newWispGC(cfg.Daemon.WispGCIntervalDuration(),
-							cfg.Daemon.WispTTLDuration(), beads.ExecCommandRunner())
-					} else {
-						wg = nil
-					}
-					// Rebuild automation dispatcher from new config.
-					ad = buildAutomationDispatcher(cityRoot, cfg, beads.ExecCommandRunner(), rec, stderr)
-					observePaths = observeSearchPaths(cfg.Daemon.ObservePaths)
-					// Update API server state if running.
-					if cs != nil {
-						cs.update(cfg, sp)
-					}
-					fmt.Fprintf(stdout, "Config reloaded: %s (rev %s)\n", //nolint:errcheck // best-effort stdout
-						configReloadSummary(oldAgentCount, oldRigCount, len(cfg.Agents), len(cfg.Rigs)),
-						shortRev(result.Revision))
-					telemetry.RecordConfigReload(ctx, result.Revision, nil)
-				}
-			}
-			agents = buildFn(cfg, sp)
-			doReconcileAgents(agents, sp, rops, dops, ct, it, rec, poolSessions, suspendedNames, cfg.Daemon.DriftDrainTimeoutDuration(), cfg.Session.StartupTimeoutDuration(), stdout, stderr, ctx)
-			ensureObservers(agents, observePaths, rec)
-			// Wisp GC: purge expired closed molecules.
-			if wg != nil && wg.shouldRun(time.Now()) {
-				purged, gcErr := wg.runGC(filepath.Dir(tomlPath), time.Now())
-				if gcErr != nil {
-					fmt.Fprintf(stderr, "gc start: wisp gc: %v\n", gcErr) //nolint:errcheck // best-effort stderr
-				} else if purged > 0 {
-					fmt.Fprintf(stdout, "Bead GC: purged %d expired bead(s)\n", purged) //nolint:errcheck // best-effort stdout
-				}
-			}
-			// Automation dispatch: evaluate gates and fire due automations.
-			if ad != nil {
-				ad.dispatch(ctx, filepath.Dir(tomlPath), time.Now())
-			}
-		case <-ctx.Done():
-			return
-		}
+	cr := &CityRuntime{
+		cityPath:          cityPath,
+		cityName:          cityName,
+		tomlPath:          tomlPath,
+		watchDirs:         watchDirs,
+		cfg:               cfg,
+		sp:                sp,
+		buildFn:           buildFn,
+		rops:              rops,
+		dops:              dops,
+		ct:                ct,
+		it:                it,
+		wg:                wg,
+		ad:                ad,
+		rec:               rec,
+		cs:                cs,
+		poolSessions:      poolSessions,
+		poolDeathHandlers: poolDeathHandlers,
+		suspendedNames:    suspendedNames,
+		stdout:            stdout,
+		stderr:            stderr,
 	}
+	cr.run(ctx)
 }
 
 // shortRev returns the first 12 characters of a revision hash.
@@ -588,21 +421,28 @@ func runController(
 	telemetry.RecordControllerLifecycle(context.Background(), "started")
 	fmt.Fprintln(stdout, "Controller started.") //nolint:errcheck // best-effort stdout
 
-	rops := newReconcileOps(sp)
-
-	// Build crash tracker from config — must happen before API server
-	// starts so IsQuarantined reads are race-free.
-	var ct crashTracker
-	maxR := cfg.Daemon.MaxRestartsOrDefault()
-	if maxR > 0 {
-		ct = newCrashTracker(maxR, cfg.Daemon.RestartWindowDuration())
-	}
+	cr := newCityRuntime(CityRuntimeParams{
+		CityPath:          cityPath,
+		CityName:          cityName,
+		TomlPath:          tomlPath,
+		WatchDirs:         initialWatchDirs,
+		Cfg:               cfg,
+		SP:                sp,
+		BuildFn:           buildFn,
+		Dops:              dops,
+		Rec:               rec,
+		EventProv:         eventProv,
+		PoolSessions:      poolSessions,
+		PoolDeathHandlers: poolDeathHandlers,
+		Stdout:            stdout,
+		Stderr:            stderr,
+	})
 
 	// Start API server if configured.
-	var cs *controllerState
 	if cfg.API.Port > 0 {
-		cs = newControllerState(cfg, sp, eventProv, cityName, cityPath)
-		cs.ct = ct
+		cs := newControllerState(cfg, sp, eventProv, cityName, cityPath)
+		cs.ct = cr.crashTrack()
+		cr.setControllerState(cs)
 		bind := cfg.API.BindOrDefault()
 		nonLocal := bind != "127.0.0.1" && bind != "localhost" && bind != "::1"
 		var apiSrv *api.Server
@@ -631,39 +471,9 @@ func runController(
 		}
 	}
 
-	// Build idle tracker from config.
-	it := buildIdleTracker(cfg, cityName, sp)
-
-	// Build wisp GC from config.
-	var wg wispGC
-	if cfg.Daemon.WispGCEnabled() {
-		wg = newWispGC(cfg.Daemon.WispGCIntervalDuration(),
-			cfg.Daemon.WispTTLDuration(), beads.ExecCommandRunner())
-	}
-
-	// Build automation dispatcher from config.
-	ad := buildAutomationDispatcher(cityPath, cfg, beads.ExecCommandRunner(), rec, stderr)
-
-	suspendedNames := computeSuspendedNames(cfg, cityName, cityPath)
 	runPoolOnBoot(cfg, cityPath, shellScaleCheck, stderr)
-	controllerLoop(ctx, cfg.Daemon.PatrolIntervalDuration(),
-		cfg, cityName, tomlPath, initialWatchDirs,
-		buildFn, sp, rops, dops, ct, it, wg, ad, rec, poolSessions, poolDeathHandlers, suspendedNames, cs, stdout, stderr)
-
-	// Shutdown: graceful stop all sessions on this city's socket.
-	timeout := cfg.Daemon.ShutdownTimeoutDuration()
-	if rops != nil {
-		running, _ := rops.listRunning("")
-		gracefulStopAll(running, sp, timeout, rec, stdout, stderr)
-	} else {
-		var names []string
-		for _, a := range buildFn(cfg, sp) {
-			if a.IsRunning() {
-				names = append(names, a.SessionName())
-			}
-		}
-		gracefulStopAll(names, sp, timeout, rec, stdout, stderr)
-	}
+	cr.run(ctx)
+	cr.shutdown()
 
 	rec.Record(events.Event{Type: events.ControllerStopped, Actor: "gc"})
 	telemetry.RecordControllerLifecycle(context.Background(), "stopped")
