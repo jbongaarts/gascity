@@ -29,7 +29,6 @@ type ConvoyData struct {
 	Escalations []EscalationRow
 	Health      *HealthRow
 	Queues      []QueueRow
-	Sessions    []SessionRow
 	Hooks       []HookRow
 	Mayor       *MayorStatus
 	Issues      []IssueRow
@@ -87,16 +86,6 @@ type QueueRow struct {
 	Processing int
 	Completed  int
 	Failed     int
-}
-
-// SessionRow represents an agent session.
-type SessionRow struct {
-	Name     string // Session name
-	Role     string // Agent role
-	Rig      string // Rig name if applicable
-	Worker   string // Worker name for pool agents
-	Activity string // Age since last activity
-	IsAlive  bool   // Whether the agent process is running
 }
 
 // HookRow represents a hooked bead (work pinned to an agent).

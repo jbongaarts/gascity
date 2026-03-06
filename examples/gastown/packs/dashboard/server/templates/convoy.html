@@ -116,7 +116,7 @@
         {{end}}
 
         <div class="panels">
-            <!-- Row 1: Convoys, Polecats, Sessions -->
+            <!-- Row 1: Convoys, Polecats -->
 
             <!-- Convoys Panel -->
             <div class="panel" id="convoy-panel">
@@ -339,55 +339,6 @@
                         <p>No polecats</p>
                     </div>
                     {{end}}
-                </div>
-            </div>
-
-            <!-- Sessions Panel -->
-            <div class="panel">
-                <div class="panel-header">
-                    <h2>📟 Sessions</h2>
-                    <span class="count">{{len .Sessions}}</span>
-                    <button class="collapse-btn" aria-label="Toggle panel">▼</button>
-                    <button class="expand-btn">Expand</button>
-                </div>
-                <div class="panel-body">
-                    {{if .Sessions}}
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Role</th>
-                                <th>Rig</th>
-                                <th>Worker</th>
-                                <th>Activity</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {{range .Sessions}}
-                            <tr class="session-row" data-session-name="{{.Name}}">
-                                <td>
-                                    <span class="role-{{.Role}}">{{.Role}}</span>
-                                </td>
-                                <td>{{.Rig}}</td>
-                                <td>{{.Worker}}</td>
-                                <td>{{.Activity}}</td>
-                            </tr>
-                            {{end}}
-                        </tbody>
-                    </table>
-                    {{else}}
-                    <div class="empty-state">
-                        <p>No active sessions</p>
-                    </div>
-                    {{end}}
-                    <!-- Session terminal preview -->
-                    <div id="session-preview" style="display:none;">
-                        <div class="session-preview-header">
-                            <button id="session-preview-back" class="mail-back-btn">← Back</button>
-                            <span id="session-preview-name" class="session-preview-title"></span>
-                            <span id="session-preview-status" class="session-preview-refresh-status"></span>
-                        </div>
-                        <pre id="session-preview-content" class="session-preview-content">Loading...</pre>
-                    </div>
                 </div>
             </div>
 

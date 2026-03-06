@@ -28,7 +28,6 @@ type ConvoyFetcher interface {
 	FetchEscalations() ([]EscalationRow, error)
 	FetchHealth() (*HealthRow, error)
 	FetchQueues() ([]QueueRow, error)
-	FetchSessions() ([]SessionRow, error)
 	FetchHooks() ([]HookRow, error)
 	FetchMayor() (*MayorStatus, error)
 	FetchIssues() ([]IssueRow, error)
@@ -75,7 +74,6 @@ func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		escalations []EscalationRow
 		health      *HealthRow
 		queues      []QueueRow
-		sessions    []SessionRow
 		hooks       []HookRow
 		mayor       *MayorStatus
 		issues      []IssueRow
@@ -83,7 +81,7 @@ func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		wg          sync.WaitGroup
 	)
 
-	wg.Add(14)
+	wg.Add(13)
 
 	go func() {
 		defer wg.Done()
@@ -160,14 +158,6 @@ func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		var err error
-		sessions, err = h.fetcher.FetchSessions()
-		if err != nil {
-			log.Printf("dashboard: FetchSessions failed: %v", err)
-		}
-	}()
-	go func() {
-		defer wg.Done()
-		var err error
 		hooks, err = h.fetcher.FetchHooks()
 		if err != nil {
 			log.Printf("dashboard: FetchHooks failed: %v", err)
@@ -223,7 +213,6 @@ func (h *ConvoyHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Escalations: escalations,
 		Health:      health,
 		Queues:      queues,
-		Sessions:    sessions,
 		Hooks:       hooks,
 		Mayor:       mayor,
 		Issues:      enrichIssuesWithAssignees(issues, hooks),

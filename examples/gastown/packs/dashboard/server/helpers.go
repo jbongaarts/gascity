@@ -116,29 +116,6 @@ func formatAgentAddress(addr string) string {
 	return addr
 }
 
-// parseSessionParts extracts role, rig, and worker from a session name.
-// Gas City sessions default to the agent name. For gastown-style sessions
-// like "rig-role-worker", we split on hyphens.
-func parseSessionParts(name string) (role, rig, worker string) {
-	parts := strings.SplitN(name, "-", 3)
-	switch len(parts) {
-	case 3:
-		// "rig-role-worker" style
-		rig = parts[0]
-		role = parts[1]
-		worker = parts[2]
-	case 2:
-		// "role-worker" or "rig-role"
-		role = parts[0]
-		worker = parts[1]
-	default:
-		// Just the agent name
-		role = name
-		worker = name
-	}
-	return
-}
-
 // calculateWorkStatus determines the work status based on progress and activity.
 // Returns: "complete", "active", "stale", "stuck", or "waiting"
 func calculateWorkStatus(completed, total int, activityColor string) string {

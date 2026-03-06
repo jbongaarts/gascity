@@ -665,48 +665,6 @@ func (f *APIFetcher) FetchQueues() ([]QueueRow, error) {
 	return rows, nil
 }
 
-// FetchSessions returns agent session info from the API.
-func (f *APIFetcher) FetchSessions() ([]SessionRow, error) {
-	var agents []apiAgentResponse
-	if err := f.getList("/v0/agents", &agents); err != nil {
-		return nil, nil
-	}
-
-	var rows []SessionRow
-	for _, agent := range agents {
-		if agent.Session == nil {
-			continue
-		}
-
-		row := SessionRow{
-			Name:    agent.Session.Name,
-			IsAlive: agent.Running,
-		}
-
-		if agent.Session.LastActivity != nil {
-			row.Activity = formatTimestamp(*agent.Session.LastActivity)
-		}
-
-		row.Role, row.Rig, row.Worker = parseSessionParts(agent.Session.Name)
-		if agent.Rig != "" {
-			row.Rig = agent.Rig
-		}
-
-		rows = append(rows, row)
-	}
-
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Rig != rows[j].Rig {
-			return rows[i].Rig < rows[j].Rig
-		}
-		if rows[i].Role != rows[j].Role {
-			return rows[i].Role < rows[j].Role
-		}
-		return rows[i].Worker < rows[j].Worker
-	})
-	return rows, nil
-}
-
 // FetchActivity returns recent events from the API.
 func (f *APIFetcher) FetchActivity() ([]ActivityRow, error) {
 	var events []apiEvent
