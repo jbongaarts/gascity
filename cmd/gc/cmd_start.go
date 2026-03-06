@@ -363,6 +363,20 @@ func doStart(args []string, controllerMode bool, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// Materialize Claude skill stubs (after formulas, before agent startup).
+	if cfg.Workspace.Provider == "claude" {
+		dirs := []string{cityPath}
+		for _, r := range cfg.Rigs {
+			if r.Path != "" {
+				dirs = append(dirs, r.Path)
+			}
+		}
+		if err := materializeSkillStubs(dirs...); err != nil {
+			fmt.Fprintf(stderr, "gc start: skill stubs: %v\n", err) //nolint:errcheck // best-effort stderr
+			// Non-fatal.
+		}
+	}
+
 	// Validate agents.
 	if err := config.ValidateAgents(cfg.Agents); err != nil {
 		fmt.Fprintf(stderr, "gc start: %v\n", err) //nolint:errcheck // best-effort stderr
@@ -627,6 +641,13 @@ func stageHookFiles(copyFiles []session.CopyEntry, cityPath, workDir string) []s
 		if _, err := os.Stat(abs); err == nil {
 			copyFiles = append(copyFiles, session.CopyEntry{Src: abs, RelDst: rel})
 		}
+	}
+	// Stage Claude skills directory (if materialized).
+	skillsDir := filepath.Join(workDir, ".claude", "skills")
+	if info, err := os.Stat(skillsDir); err == nil && info.IsDir() {
+		copyFiles = append(copyFiles, session.CopyEntry{
+			Src: skillsDir, RelDst: filepath.Join(".claude", "skills"),
+		})
 	}
 	// cityDir-based hooks: claude (.gc/settings.json).
 	// Skip if settingsArgs already added it.
