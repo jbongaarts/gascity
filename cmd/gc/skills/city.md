@@ -20,6 +20,10 @@ gc stop                                # Stop all agent sessions
 gc restart                             # Stop then start
 ```
 
+`gc start` starts all singleton agents and resumes existing multi-instance
+agents, but does NOT create new multi instances. Use `gc agent start
+<template>` to create new instances from a `multi = true` template.
+
 ## Status
 
 ```
