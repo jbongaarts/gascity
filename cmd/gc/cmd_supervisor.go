@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,7 +11,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -122,6 +125,44 @@ func supervisorSocketPath() string {
 	return filepath.Join(supervisor.RuntimeDir(), "supervisor.sock")
 }
 
+// startSupervisorSocket creates a Unix domain socket at the given path
+// and handles ping/stop commands. Unlike startControllerSocket (which
+// constructs its own path), this binds to the exact path provided.
+func startSupervisorSocket(sockPath string, cancelFn context.CancelFunc) (net.Listener, error) {
+	os.Remove(sockPath) //nolint:errcheck // remove stale socket from previous crash
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		return nil, fmt.Errorf("listening on supervisor socket: %w", err)
+	}
+	go func() {
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return // listener closed
+			}
+			go handleSupervisorConn(conn, cancelFn)
+		}
+	}()
+	return lis, nil
+}
+
+// handleSupervisorConn reads from a connection and dispatches commands.
+// Supported: "stop" (shutdown), "ping" (liveness check, returns PID).
+func handleSupervisorConn(conn net.Conn, cancelFn context.CancelFunc) {
+	defer conn.Close()                                     //nolint:errcheck
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second)) //nolint:errcheck
+	scanner := bufio.NewScanner(conn)
+	if scanner.Scan() {
+		switch scanner.Text() {
+		case "stop":
+			cancelFn()
+			conn.Write([]byte("ok\n")) //nolint:errcheck
+		case "ping":
+			fmt.Fprintf(conn, "%d\n", os.Getpid()) //nolint:errcheck
+		}
+	}
+}
+
 // supervisorAlive checks whether the supervisor is running by pinging
 // the control socket. Returns the PID if alive, 0 otherwise.
 func supervisorAlive() int {
@@ -138,7 +179,7 @@ func supervisorAlive() int {
 	if err != nil || n == 0 {
 		return 0
 	}
-	pid, err := strconv.Atoi(string(buf[:n]))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(buf[:n])))
 	if err != nil {
 		return 0
 	}
@@ -201,18 +242,19 @@ func runSupervisor(stdout, stderr io.Writer) int {
 	// Signal handler.
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	go func() {
 		<-sigCh
 		cancel()
 	}()
 
-	// Control socket.
+	// Control socket — uses supervisor-specific path, not the per-city controller socket.
 	sockPath := supervisorSocketPath()
 	if err := os.MkdirAll(filepath.Dir(sockPath), 0o700); err != nil {
 		fmt.Fprintf(stderr, "gc supervisor: creating socket dir: %v\n", err) //nolint:errcheck
 		return 1
 	}
-	lis, err := startControllerSocket(filepath.Dir(sockPath), cancel)
+	lis, err := startSupervisorSocket(sockPath, cancel)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc supervisor: %v\n", err) //nolint:errcheck
 		return 1
@@ -272,16 +314,22 @@ func runSupervisor(stdout, stderr io.Writer) int {
 		case <-ticker.C:
 			reconcileCities(reg, cities, &mu, stdout, stderr)
 		case <-ctx.Done():
-			// Shutdown all cities.
+			// Shutdown all cities. Collect under lock, then stop outside to
+			// avoid blocking API requests during graceful shutdown.
 			mu.Lock()
-			for name, mc := range cities {
+			toStop := make(map[string]*managedCity, len(cities))
+			for k, v := range cities {
+				toStop[k] = v
+				delete(cities, k)
+			}
+			mu.Unlock()
+			for name, mc := range toStop {
 				fmt.Fprintf(stdout, "Stopping city '%s'...\n", name) //nolint:errcheck
 				mc.cancel()
 				<-mc.done
 				mc.cr.shutdown()
 				fmt.Fprintf(stdout, "City '%s' stopped.\n", name) //nolint:errcheck
 			}
-			mu.Unlock()
 			fmt.Fprintln(stdout, "Supervisor stopped.") //nolint:errcheck
 			return 0
 		}
@@ -308,23 +356,32 @@ func reconcileCities(
 		desired[e.Path] = e
 	}
 
+	// Stop cities no longer in registry. Collect under lock, stop outside
+	// to avoid blocking API requests during graceful shutdown.
 	mu.Lock()
-	defer mu.Unlock()
-
-	// Stop cities no longer in registry.
+	var toStop []*managedCity
+	var toStopPaths []string
 	for path, mc := range cities {
 		if _, ok := desired[path]; !ok {
-			name := filepath.Base(path)
-			fmt.Fprintf(stdout, "Unregistered city '%s', stopping...\n", name) //nolint:errcheck
-			mc.cancel()
-			<-mc.done
-			mc.cr.shutdown()
+			toStop = append(toStop, mc)
+			toStopPaths = append(toStopPaths, path)
 			delete(cities, path)
-			fmt.Fprintf(stdout, "City '%s' stopped.\n", name) //nolint:errcheck
 		}
+	}
+	mu.Unlock()
+
+	for i, mc := range toStop {
+		name := filepath.Base(toStopPaths[i])
+		fmt.Fprintf(stdout, "Unregistered city '%s', stopping...\n", name) //nolint:errcheck
+		mc.cancel()
+		<-mc.done
+		mc.cr.shutdown()
+		fmt.Fprintf(stdout, "City '%s' stopped.\n", name) //nolint:errcheck
 	}
 
 	// Start new cities.
+	mu.Lock()
+	defer mu.Unlock()
 	for path, entry := range desired {
 		if _, running := cities[path]; running {
 			continue
@@ -394,15 +451,19 @@ func reconcileCities(
 		cityCtx, cityCancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
 
-		go func(n string) {
+		go func(n, p string) {
 			defer close(done)
 			defer func() {
+				// Remove from map so reconcile can restart this city.
+				mu.Lock()
+				delete(cities, p)
+				mu.Unlock()
 				if r := recover(); r != nil {
 					fmt.Fprintf(stderr, "gc supervisor: city '%s' panicked: %v\n", n, r) //nolint:errcheck
 				}
 			}()
 			cr.run(cityCtx)
-		}(cityName)
+		}(cityName, path)
 
 		cities[path] = &managedCity{cr: cr, cancel: cityCancel, done: done}
 		rec.Record(events.Event{Type: events.ControllerStarted, Actor: "gc"})
@@ -458,12 +519,22 @@ type multiCityState struct {
 	startedAt time.Time
 }
 
-// firstCity returns the controllerState of the first city, or nil.
+// firstCity returns the controllerState of the first city (by sorted path),
+// or nil if no cities are running. Deterministic ordering ensures API
+// requests always route to the same city.
 func (m *multiCityState) firstCity() *controllerState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, mc := range m.cities {
-		if mc.cr.cs != nil {
+	if len(m.cities) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(m.cities))
+	for p := range m.cities {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if mc := m.cities[p]; mc.cr.cs != nil {
 			return mc.cr.cs
 		}
 	}
