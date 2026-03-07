@@ -316,6 +316,9 @@ func runSupervisor(stdout, stderr io.Writer) int {
 
 	// Panic backoff tracking for crash-loop prevention.
 	panicHistory := make(map[string]*panicRecord)
+	// Init failure backoff tracking — prevents log spam when a city
+	// has a broken config or missing dependencies.
+	initFailures := make(map[string]*initFailRecord)
 
 	// safeReconcile wraps reconcileCities with panic recovery so a bug
 	// in the reconciliation loop doesn't crash the entire supervisor.
@@ -325,7 +328,7 @@ func runSupervisor(stdout, stderr io.Writer) int {
 				fmt.Fprintf(stderr, "gc supervisor: reconcile panicked: %v\n", r) //nolint:errcheck
 			}
 		}()
-		reconcileCities(reg, cities, &mu, panicHistory, stdout, stderr)
+		reconcileCities(reg, cities, &mu, panicHistory, initFailures, stdout, stderr)
 	}
 
 	// Initial reconcile.
@@ -371,14 +374,26 @@ type panicRecord struct {
 	backoff time.Time // don't restart until after this time
 }
 
+// initFailRecord tracks consecutive initialization failure count and
+// backoff for cities that fail prepareCityForSupervisor or config load.
+// The configMod field lets us reset backoff when the user fixes their config.
+type initFailRecord struct {
+	count     int
+	backoff   time.Time
+	configMod time.Time // mtime of city.toml at last failure
+}
+
 // reconcileCities compares the registry against running cities and
 // starts/stops as needed. panicHistory tracks cities that have panicked
-// to implement crash-loop backoff.
+// to implement crash-loop backoff. initFailures tracks cities that fail
+// initialization (config load, provider creation, etc.) with backoff to
+// prevent log spam every patrol interval.
 func reconcileCities(
 	reg *supervisor.Registry,
 	cities map[string]*managedCity,
 	mu *sync.RWMutex,
 	panicHistory map[string]*panicRecord,
+	initFailures map[string]*initFailRecord,
 	stdout, stderr io.Writer,
 ) {
 	entries, err := reg.List()
@@ -422,19 +437,25 @@ func reconcileCities(
 		// Clear backoff so re-registering starts immediately.
 		mu.Lock()
 		delete(panicHistory, toStopPaths[i])
+		delete(initFailures, toStopPaths[i])
 		mu.Unlock()
 		fmt.Fprintf(stdout, "City '%s' stopped.\n", name) //nolint:errcheck
 	}
 
-	// Clear panicHistory for any path that was in panicHistory but is
-	// no longer in the desired set. This handles the case where a city
-	// panicked (self-removed from cities + recorded backoff) and was
-	// then unregistered — without this, re-registering the fixed city
-	// would inherit the old backoff.
+	// Clear panicHistory and initFailures for any path no longer in the
+	// desired set. This handles the case where a city panicked or failed
+	// init (self-removed from cities + recorded backoff) and was then
+	// unregistered — without this, re-registering the fixed city would
+	// inherit the old backoff.
 	mu.Lock()
 	for path := range panicHistory {
 		if _, ok := desired[path]; !ok {
 			delete(panicHistory, path)
+		}
+	}
+	for path := range initFailures {
+		if _, ok := desired[path]; !ok {
+			delete(initFailures, path)
 		}
 	}
 	mu.Unlock()
@@ -465,11 +486,56 @@ func reconcileCities(
 			continue
 		}
 
-		// Auto-fetch remote packs before full config load (same as doStart).
+		// Init failure backoff: skip cities whose init failed recently,
+		// unless the config file has been modified (user may have fixed it).
 		tomlPath := filepath.Join(path, "city.toml")
+		mu.Lock()
+		ifr := initFailures[path]
+		skipInit := ifr != nil && time.Now().Before(ifr.backoff)
+		mu.Unlock()
+		if skipInit {
+			// Check if config was modified since last failure.
+			if info, err := os.Stat(tomlPath); err != nil || !info.ModTime().After(ifr.configMod) {
+				continue
+			}
+			// Config changed — reset backoff and retry.
+			mu.Lock()
+			delete(initFailures, path)
+			mu.Unlock()
+		}
+
+		// recordInitFailure logs the error and records backoff state.
+		recordInitFailure := func(cityName, msg string) {
+			fmt.Fprintf(stderr, "gc supervisor: city '%s': %s (skipping)\n", cityName, msg) //nolint:errcheck
+			var configMod time.Time
+			if info, stErr := os.Stat(tomlPath); stErr == nil {
+				configMod = info.ModTime()
+			}
+			mu.Lock()
+			ifrec := initFailures[path]
+			if ifrec == nil {
+				ifrec = &initFailRecord{}
+				initFailures[path] = ifrec
+			}
+			ifrec.count++
+			exp := ifrec.count - 1
+			if exp > 5 {
+				exp = 5
+			}
+			delay := time.Duration(10<<exp) * time.Second
+			if delay > 5*time.Minute {
+				delay = 5 * time.Minute
+			}
+			ifrec.backoff = time.Now().Add(delay)
+			ifrec.configMod = configMod
+			fmt.Fprintf(stderr, "gc supervisor: city '%s': init failure #%d, next retry in %s\n", cityName, ifrec.count, delay) //nolint:errcheck
+			mu.Unlock()
+		}
+
+		// Auto-fetch remote packs before full config load (same as doStart).
 		if quickCfg, qErr := config.Load(fsys.OSFS{}, tomlPath); qErr == nil && len(quickCfg.Packs) > 0 {
 			if fErr := config.FetchPacks(quickCfg.Packs, path); fErr != nil {
-				fmt.Fprintf(stderr, "gc supervisor: city '%s': fetching packs: %v (skipping)\n", name, fErr) //nolint:errcheck
+				recordInitFailure(name, fmt.Sprintf("fetching packs: %v", fErr))
 				continue
 			}
 		}
@@ -477,7 +543,7 @@ func reconcileCities(
 		// Load city config with provenance so WatchDirs covers included files.
 		cfg, prov, loadErr := config.LoadWithIncludes(fsys.OSFS{}, tomlPath)
 		if loadErr != nil {
-			fmt.Fprintf(stderr, "gc supervisor: city '%s': %v (skipping)\n", name, loadErr) //nolint:errcheck
+			recordInitFailure(name, loadErr.Error())
 			continue
 		}
 
@@ -491,7 +557,7 @@ func reconcileCities(
 
 		// Run critical city initialization (same steps as cmd_start.go).
 		if err := prepareCityForSupervisor(path, cityName, cfg, stderr); err != nil {
-			fmt.Fprintf(stderr, "gc supervisor: city '%s': init: %v (skipping)\n", cityName, err) //nolint:errcheck
+			recordInitFailure(cityName, fmt.Sprintf("init: %v", err))
 			continue
 		}
 
@@ -504,13 +570,13 @@ func reconcileCities(
 		sp, spErr := newSessionProviderByName(
 			effectiveProviderName(cfg.Session.Provider), cfg.Session, cityName)
 		if spErr != nil {
-			fmt.Fprintf(stderr, "gc supervisor: city '%s': session provider: %v (skipping)\n", cityName, spErr) //nolint:errcheck
+			recordInitFailure(cityName, fmt.Sprintf("session provider: %v", spErr))
 			continue
 		}
 
 		// Fail-fast image pre-check for container providers (same as doStart).
 		if err := checkAgentImages(sp, cfg.Agents, stderr); err != nil {
-			fmt.Fprintf(stderr, "gc supervisor: city '%s': %v (skipping)\n", cityName, err) //nolint:errcheck
+			recordInitFailure(cityName, err.Error())
 			continue
 		}
 
@@ -572,6 +638,7 @@ func reconcileCities(
 			continue
 		}
 		cities[path] = &managedCity{cr: cr, cancel: cityCancel, done: done, closer: fr}
+		delete(initFailures, path) // clear backoff on successful init
 		mu.Unlock()
 
 		go func(n, p string, cityFr *events.FileRecorder) {
