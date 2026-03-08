@@ -9,7 +9,6 @@ package session
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -169,20 +168,9 @@ func (m *Manager) Create(ctx context.Context, template, title, command, workDir,
 // suspended, it is resumed first using resumeCommand. If the tmux session
 // died (active bead but no process), it is restarted.
 func (m *Manager) Attach(ctx context.Context, id string, resumeCommand string, hints runtime.Config) error {
-	b, err := m.store.Get(id)
+	b, sessName, err := m.sessionBead(id)
 	if err != nil {
-		return fmt.Errorf("getting session: %w", err)
-	}
-	if b.Type != BeadType {
-		return fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
-	}
-	if b.Status == "closed" {
-		return fmt.Errorf("session %s is closed", id)
-	}
-
-	sessName := b.Metadata["session_name"]
-	if sessName == "" {
-		sessName = sessionNameFor(id)
+		return err
 	}
 
 	state := State(b.Metadata["state"])
@@ -193,7 +181,7 @@ func (m *Manager) Attach(ctx context.Context, id string, resumeCommand string, h
 		if cmd == "" {
 			// Fallback: use no resume (fresh start). Caller should provide
 			// the resume command for conversation continuity.
-			return fmt.Errorf("session %s is suspended and no resume command provided", id)
+			return fmt.Errorf("%w: %s", ErrResumeRequired, id)
 		}
 
 		cfg := hints
@@ -214,23 +202,12 @@ func (m *Manager) Attach(ctx context.Context, id string, resumeCommand string, h
 
 // Suspend saves session state and kills the runtime session.
 func (m *Manager) Suspend(id string) error {
-	b, err := m.store.Get(id)
+	b, sessName, err := m.sessionBead(id)
 	if err != nil {
-		return fmt.Errorf("getting session: %w", err)
-	}
-	if b.Type != BeadType {
-		return fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
-	}
-	if b.Status == "closed" {
-		return fmt.Errorf("session %s is closed", id)
+		return err
 	}
 	if State(b.Metadata["state"]) == StateSuspended {
 		return nil // already suspended
-	}
-
-	sessName := b.Metadata["session_name"]
-	if sessName == "" {
-		sessName = sessionNameFor(id)
 	}
 
 	// Kill the runtime session (skip if already dead).
@@ -253,12 +230,9 @@ func (m *Manager) Suspend(id string) error {
 
 // Close ends a conversation permanently.
 func (m *Manager) Close(id string) error {
-	b, err := m.store.Get(id)
+	b, sessName, err := m.loadSessionBead(id, true)
 	if err != nil {
-		return fmt.Errorf("getting session: %w", err)
-	}
-	if b.Type != BeadType {
-		return fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
+		return err
 	}
 	if b.Status == "closed" {
 		return nil // already closed
@@ -266,10 +240,6 @@ func (m *Manager) Close(id string) error {
 
 	// If active, kill the runtime session.
 	if State(b.Metadata["state"]) == StateActive {
-		sessName := b.Metadata["session_name"]
-		if sessName == "" {
-			sessName = sessionNameFor(id)
-		}
 		_ = m.sp.Stop(sessName) // best-effort
 	}
 
@@ -336,12 +306,8 @@ func (m *Manager) ConfirmCreation(id string) error {
 
 // Rename updates the title of a chat session.
 func (m *Manager) Rename(id, title string) error {
-	b, err := m.store.Get(id)
-	if err != nil {
-		return fmt.Errorf("getting session: %w", err)
-	}
-	if b.Type != BeadType {
-		return fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
+	if _, _, err := m.loadSessionBead(id, true); err != nil {
+		return err
 	}
 	return m.store.Update(id, beads.UpdateOpts{Title: &title})
 }
@@ -387,12 +353,9 @@ func (m *Manager) Prune(before time.Time) (int, error) {
 
 // Get returns info about a single session.
 func (m *Manager) Get(id string) (Info, error) {
-	b, err := m.store.Get(id)
+	b, _, err := m.loadSessionBead(id, true)
 	if err != nil {
 		return Info{}, err
-	}
-	if b.Type != BeadType {
-		return Info{}, fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
 	}
 	return m.infoFromBead(b), nil
 }
@@ -450,19 +413,12 @@ func (m *Manager) List(stateFilter string, templateFilter string) ([]Info, error
 
 // Peek captures the last N lines of output from the session.
 func (m *Manager) Peek(id string, lines int) (string, error) {
-	b, err := m.store.Get(id)
+	b, sessName, err := m.loadSessionBead(id, true)
 	if err != nil {
 		return "", err
 	}
-	if b.Type != BeadType {
-		return "", fmt.Errorf("bead %s is not a session", id)
-	}
 	if b.Status == "closed" || State(b.Metadata["state"]) == StateSuspended {
-		return "", errors.New("session is not active")
-	}
-	sessName := b.Metadata["session_name"]
-	if sessName == "" {
-		sessName = sessionNameFor(id)
+		return "", fmt.Errorf("%w: %s", ErrSessionInactive, id)
 	}
 	return m.sp.Peek(sessName, lines)
 }

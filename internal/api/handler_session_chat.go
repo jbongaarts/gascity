@@ -117,9 +117,9 @@ func writeSessionManagerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotImplemented, "unsupported", err.Error())
 	case errors.Is(err, session.ErrNoPendingInteraction):
 		writeError(w, http.StatusConflict, "no_pending", err.Error())
-	case strings.Contains(err.Error(), " is closed"):
+	case errors.Is(err, session.ErrSessionClosed), errors.Is(err, session.ErrResumeRequired):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
-	case strings.Contains(err.Error(), "is not a session"):
+	case errors.Is(err, session.ErrNotSession):
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 	default:
 		writeStoreError(w, err)
@@ -328,6 +328,9 @@ func (s *Server) handleSessionMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// This is a best-effort guard to keep new turns from crossing a provider's
+	// blocking approval/question state. Providers can still surface a pending
+	// interaction after this check and before Send reaches the runtime.
 	pending, supported, err := mgr.Pending(id)
 	if err != nil {
 		s.idem.unreserve(idemKey)
@@ -474,6 +477,10 @@ func (s *Server) handleSessionStream(w http.ResponseWriter, r *http.Request) {
 
 	sp := s.state.SessionProvider()
 	running := info.State == session.StateActive && sp.IsRunning(info.SessionName)
+	if path == "" && !running {
+		writeError(w, http.StatusNotFound, "not_found", "session "+id+" has no live output")
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -490,23 +497,49 @@ func (s *Server) handleSessionStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	if info.State == "" {
+		s.emitClosedSessionSnapshot(w, info, path)
+		return
+	}
 	switch {
 	case path != "":
 		s.streamSessionTranscriptLog(ctx, w, info, path)
-	case running:
-		s.streamSessionPeek(ctx, w, info)
 	default:
-		keepalive := time.NewTicker(sseKeepalive)
-		defer keepalive.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-keepalive.C:
-				writeSSEComment(w)
-			}
-		}
+		s.streamSessionPeek(ctx, w, info)
 	}
+}
+
+func (s *Server) emitClosedSessionSnapshot(w http.ResponseWriter, info session.Info, logPath string) {
+	if logPath == "" {
+		return
+	}
+	sess, err := sessionlog.ReadFile(logPath, 1)
+	if err != nil {
+		return
+	}
+
+	turns := make([]outputTurn, 0, len(sess.Messages))
+	for _, entry := range sess.Messages {
+		turn := entryToTurn(entry)
+		if turn.Text == "" {
+			continue
+		}
+		turns = append(turns, turn)
+	}
+	if len(turns) == 0 {
+		return
+	}
+
+	data, err := json.Marshal(sessionTranscriptResponse{
+		ID:       info.ID,
+		Template: info.Template,
+		Format:   "conversation",
+		Turns:    turns,
+	})
+	if err != nil {
+		return
+	}
+	writeSSE(w, "turn", 1, data)
 }
 
 func (s *Server) streamSessionTranscriptLog(ctx context.Context, w http.ResponseWriter, info session.Info, logPath string) {

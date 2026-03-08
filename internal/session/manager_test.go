@@ -939,3 +939,74 @@ func TestTranscriptPathPrefersSessionKey(t *testing.T) {
 		t.Errorf("TranscriptPath = %q, want %q", path, keyPath)
 	}
 }
+
+func TestTranscriptPathAllowsClosedSession(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	workDir := t.TempDir()
+	resume := ProviderResume{
+		ResumeFlag:    "--resume",
+		ResumeStyle:   "flag",
+		SessionIDFlag: "--session-id",
+	}
+	info, err := mgr.Create(context.Background(), "helper", "", "claude", workDir, "claude", nil, resume, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := mgr.Close(info.ID); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	searchBase := t.TempDir()
+	slugDir := filepath.Join(searchBase, sessionlog.ProjectSlug(workDir))
+	if err := os.MkdirAll(slugDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	keyPath := filepath.Join(slugDir, info.SessionKey+".jsonl")
+	if err := os.WriteFile(keyPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	path, err := mgr.TranscriptPath(info.ID, []string{searchBase})
+	if err != nil {
+		t.Fatalf("TranscriptPath: %v", err)
+	}
+	if path != keyPath {
+		t.Errorf("TranscriptPath = %q, want %q for closed session", path, keyPath)
+	}
+}
+
+func TestTranscriptPathSkipsAmbiguousWorkDirFallback(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	workDir := t.TempDir()
+	if _, err := mgr.Create(context.Background(), "helper", "one", "claude", workDir, "claude", nil, ProviderResume{}, runtime.Config{}); err != nil {
+		t.Fatalf("Create one: %v", err)
+	}
+	info2, err := mgr.Create(context.Background(), "helper", "two", "claude", workDir, "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create two: %v", err)
+	}
+
+	searchBase := t.TempDir()
+	slugDir := filepath.Join(searchBase, sessionlog.ProjectSlug(workDir))
+	if err := os.MkdirAll(slugDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	fallbackPath := filepath.Join(slugDir, "latest.jsonl")
+	if err := os.WriteFile(fallbackPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	path, err := mgr.TranscriptPath(info2.ID, []string{searchBase})
+	if err != nil {
+		t.Fatalf("TranscriptPath: %v", err)
+	}
+	if path != "" {
+		t.Errorf("TranscriptPath = %q, want empty when workdir fallback is ambiguous", path)
+	}
+}

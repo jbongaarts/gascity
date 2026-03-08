@@ -11,6 +11,15 @@ import (
 )
 
 var (
+	// ErrNotSession reports that the requested bead is not a session bead.
+	ErrNotSession = errors.New("bead is not a session")
+	// ErrSessionClosed reports that the requested session has been closed.
+	ErrSessionClosed = errors.New("session is closed")
+	// ErrSessionInactive reports that the requested session has no live runtime.
+	ErrSessionInactive = errors.New("session is not active")
+	// ErrResumeRequired reports that the session cannot be resumed without an
+	// explicit resume command.
+	ErrResumeRequired = errors.New("session requires resume command")
 	// ErrNoPendingInteraction reports that a session has nothing awaiting
 	// user input or approval resolution.
 	ErrNoPendingInteraction = errors.New("session has no pending interaction")
@@ -19,23 +28,30 @@ var (
 	ErrInteractionUnsupported = errors.New("session provider does not support interactive responses")
 )
 
-func (m *Manager) sessionBead(id string) (beads.Bead, string, error) {
+func sessionName(id string, b beads.Bead) string {
+	sessName := b.Metadata["session_name"]
+	if sessName == "" {
+		sessName = sessionNameFor(id)
+	}
+	return sessName
+}
+
+func (m *Manager) loadSessionBead(id string, allowClosed bool) (beads.Bead, string, error) {
 	b, err := m.store.Get(id)
 	if err != nil {
 		return beads.Bead{}, "", fmt.Errorf("getting session: %w", err)
 	}
 	if b.Type != BeadType {
-		return beads.Bead{}, "", fmt.Errorf("bead %s is not a session (type=%q)", id, b.Type)
+		return beads.Bead{}, "", fmt.Errorf("%w: bead %s (type=%q)", ErrNotSession, id, b.Type)
 	}
-	if b.Status == "closed" {
-		return beads.Bead{}, "", fmt.Errorf("session %s is closed", id)
+	if !allowClosed && b.Status == "closed" {
+		return beads.Bead{}, "", fmt.Errorf("%w: %s", ErrSessionClosed, id)
 	}
+	return b, sessionName(id, b), nil
+}
 
-	sessName := b.Metadata["session_name"]
-	if sessName == "" {
-		sessName = sessionNameFor(id)
-	}
-	return b, sessName, nil
+func (m *Manager) sessionBead(id string) (beads.Bead, string, error) {
+	return m.loadSessionBead(id, false)
 }
 
 func (m *Manager) ensureRunning(ctx context.Context, id string, b beads.Bead, sessName, resumeCommand string, hints runtime.Config) error {
@@ -43,7 +59,7 @@ func (m *Manager) ensureRunning(ctx context.Context, id string, b beads.Bead, se
 		return nil
 	}
 	if resumeCommand == "" {
-		return fmt.Errorf("session %s is suspended and no resume command provided", id)
+		return fmt.Errorf("%w: %s", ErrResumeRequired, id)
 	}
 
 	cfg := hints
@@ -146,7 +162,7 @@ func (m *Manager) Respond(id string, response runtime.InteractionResponse) error
 // It prefers session-key-specific lookup and falls back to workdir-based
 // discovery for providers that do not expose a stable session key.
 func (m *Manager) TranscriptPath(id string, searchPaths []string) (string, error) {
-	b, _, err := m.sessionBead(id)
+	b, _, err := m.loadSessionBead(id, true)
 	if err != nil {
 		return "", err
 	}
@@ -160,6 +176,25 @@ func (m *Manager) TranscriptPath(id string, searchPaths []string) (string, error
 	if sessionKey := b.Metadata["session_key"]; sessionKey != "" {
 		if path := sessionlog.FindSessionFileByID(searchPaths, workDir, sessionKey); path != "" {
 			return path, nil
+		}
+	}
+
+	all, err := m.store.ListByLabel(LabelSession, 0)
+	if err != nil {
+		return "", fmt.Errorf("listing sessions: %w", err)
+	}
+	matches := 0
+	for _, other := range all {
+		if other.Type != BeadType {
+			continue
+		}
+		if other.Metadata["work_dir"] == workDir {
+			matches++
+			if matches > 1 {
+				// Without a stable session key, multiple sessions sharing the
+				// same workdir cannot be mapped safely to a single transcript.
+				return "", nil
+			}
 		}
 	}
 	return sessionlog.FindSessionFile(searchPaths, workDir), nil
