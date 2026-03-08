@@ -491,9 +491,12 @@ func doStart(args []string, controllerMode bool, stdout, stderr io.Writer) int {
 		oneShotStore = store
 
 		// Run adoption barrier before sync.
-		result, _ := runAdoptionBarrier(store, sp, cfg, cityName, clock.Real{}, stderr, false)
+		result, passed := runAdoptionBarrier(store, sp, cfg, cityName, clock.Real{}, stderr, false)
 		if result.Adopted > 0 {
 			fmt.Fprintf(stdout, "Adopted %d running session(s) into bead store.\n", result.Adopted) //nolint:errcheck
+		}
+		if !passed && result.Skipped > 0 {
+			fmt.Fprintf(stderr, "adoption barrier: %d session(s) failed bead creation\n", result.Skipped) //nolint:errcheck
 		}
 
 		cfgNames := configuredSessionNames(cfg, cityName)

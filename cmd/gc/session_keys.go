@@ -44,6 +44,10 @@ func writeSessionKey(cityPath, sessionID, key string) error {
 	if err := os.MkdirAll(dir, secretsDirPerm); err != nil {
 		return fmt.Errorf("creating secrets dir: %w", err)
 	}
+	// MkdirAll respects umask, so explicitly chmod to ensure 0700.
+	if err := os.Chmod(dir, secretsDirPerm); err != nil {
+		return fmt.Errorf("setting secrets dir permissions: %w", err)
+	}
 	if err := os.WriteFile(path, []byte(key), secretFilePerm); err != nil {
 		return fmt.Errorf("writing session key %s: %w", sessionID, err)
 	}

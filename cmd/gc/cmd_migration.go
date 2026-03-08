@@ -63,6 +63,12 @@ func runMigrationPlan(stdout, stderr io.Writer) error {
 
 	result, passed := runAdoptionBarrier(store, sp, cfg, cityName, clock.Real{}, stderr, true)
 
+	// If the barrier failed and found no sessions, the failure was in
+	// enumeration (ListRunning or bead listing), not an empty city.
+	if !passed && result.Total == 0 {
+		return fmt.Errorf("adoption barrier failed: could not enumerate sessions or beads (see stderr)")
+	}
+
 	// Display results.
 	if result.Total == 0 {
 		fmt.Fprintln(stdout, "No running sessions found. Nothing to adopt.") //nolint:errcheck
