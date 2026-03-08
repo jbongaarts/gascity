@@ -23,8 +23,12 @@ var (
 // (wrapped with details) if multiple sessions match the template name.
 func ResolveSessionID(store beads.Store, identifier string) (string, error) {
 	// Try direct store lookup first — works for any ID format.
-	if b, err := store.Get(identifier); err == nil && b.Type == BeadType {
+	b, err := store.Get(identifier)
+	if err == nil && b.Type == BeadType {
 		return b.ID, nil
+	}
+	if err != nil && !errors.Is(err, beads.ErrNotFound) {
+		return "", fmt.Errorf("looking up session %q: %w", identifier, err)
 	}
 
 	// Fall back to template-name resolution among open sessions.

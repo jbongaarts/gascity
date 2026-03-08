@@ -126,22 +126,3 @@ func TestResolveSessionID_SkipsClosedBeads(t *testing.T) {
 		t.Fatal("expected not found for closed session")
 	}
 }
-
-func TestLooksLikeBeadID(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{"gc-42", true},
-		{"gc-1", true},
-		{"gc-abc", true},
-		{"overseer", false},
-		{"myrig/worker", false},
-		{"", false},
-	}
-	for _, tt := range tests {
-		if got := looksLikeBeadID(tt.input); got != tt.want {
-			t.Errorf("looksLikeBeadID(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}

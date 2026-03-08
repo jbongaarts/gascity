@@ -65,8 +65,10 @@ func writeResolveError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, session.ErrAmbiguous):
 		writeError(w, http.StatusConflict, "ambiguous", err.Error())
-	default:
+	case errors.Is(err, session.ErrSessionNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
 	}
 }
 
@@ -260,14 +262,10 @@ func (s *Server) handleSessionRename(w http.ResponseWriter, r *http.Request) {
 	mgr := session.NewManager(store, sp)
 	info, err := mgr.Get(id)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "id": id})
+		writeStoreError(w, err)
 		return
 	}
-	updated, err := store.Get(id)
-	if err != nil {
-		writeJSON(w, http.StatusOK, sessionToResponse(info))
-		return
-	}
+	updated, _ := store.Get(id)
 	writeJSON(w, http.StatusOK, sessionResponseWithReason(info, &updated))
 }
 
@@ -326,13 +324,9 @@ func (s *Server) handleSessionPatch(w http.ResponseWriter, r *http.Request) {
 	mgr := session.NewManager(store, sp)
 	info, err := mgr.Get(id)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "id": id})
+		writeStoreError(w, err)
 		return
 	}
-	updated, err := store.Get(id)
-	if err != nil {
-		writeJSON(w, http.StatusOK, sessionToResponse(info))
-		return
-	}
+	updated, _ := store.Get(id)
 	writeJSON(w, http.StatusOK, sessionResponseWithReason(info, &updated))
 }
