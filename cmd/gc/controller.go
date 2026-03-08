@@ -21,6 +21,7 @@ import (
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/convergence"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/runtime"
@@ -417,6 +418,24 @@ func runController(
 	}
 	defer lis.Close()         //nolint:errcheck // best-effort cleanup
 	defer os.Remove(sockPath) //nolint:errcheck // best-effort cleanup
+
+	// Generate and write the controller token for convergence loop ACL.
+	// The token is written to .gc/controller.token and kept in memory only.
+	// It is NOT set in os.Environ() to prevent leaking to child processes
+	// (exec scripts, git commands, automation hooks). Future waves that need
+	// the token from controller code use convergence.ReadToken() or pass it
+	// explicitly through function parameters.
+	controllerToken, err := convergence.GenerateToken()
+	if err != nil {
+		fmt.Fprintf(stderr, "gc start: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	_ = controllerToken // available for future waves via function parameters
+	if err := convergence.WriteToken(cityPath, controllerToken); err != nil {
+		fmt.Fprintf(stderr, "gc start: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	defer convergence.RemoveToken(cityPath) //nolint:errcheck // best-effort cleanup
 
 	cityName := cfg.Workspace.Name
 	if cityName == "" {

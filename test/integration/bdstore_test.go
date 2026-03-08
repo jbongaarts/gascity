@@ -126,6 +126,7 @@ func TestBdStoreConformance(t *testing.T) {
 	// Run conformance suite. We skip RunSequentialIDTests because BdStore
 	// uses bd's ID format (prefix-XXXX), not gc-N sequential format.
 	beadstest.RunStoreTests(t, newStore)
+	beadstest.RunMetadataTests(t, newStore)
 }
 
 // ensureDoltIdentity ensures dolt has user.name and user.email set.

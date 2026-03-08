@@ -979,6 +979,83 @@ provider = "exec:/usr/local/bin/events-bridge"
 	}
 }
 
+func TestLoadWithIncludes_AutomationsSectionOverride(t *testing.T) {
+	fs := fsys.NewFake()
+	fs.Files["/city/city.toml"] = []byte(`
+include = ["infra.toml"]
+
+[workspace]
+name = "test"
+
+[automations]
+max_timeout = "30s"
+`)
+	fs.Files["/city/infra.toml"] = []byte(`
+[automations]
+max_timeout = "120s"
+`)
+	cfg, _, err := LoadWithIncludes(fs, "/city/city.toml")
+	if err != nil {
+		t.Fatalf("LoadWithIncludes: %v", err)
+	}
+	if cfg.Automations.MaxTimeout != "120s" {
+		t.Errorf("Automations.MaxTimeout = %q, want %q", cfg.Automations.MaxTimeout, "120s")
+	}
+}
+
+func TestLoadWithIncludes_APISectionOverride(t *testing.T) {
+	fs := fsys.NewFake()
+	fs.Files["/city/city.toml"] = []byte(`
+include = ["infra.toml"]
+
+[workspace]
+name = "test"
+
+[api]
+port = 8080
+`)
+	fs.Files["/city/infra.toml"] = []byte(`
+[api]
+port = 9090
+`)
+	cfg, _, err := LoadWithIncludes(fs, "/city/city.toml")
+	if err != nil {
+		t.Fatalf("LoadWithIncludes: %v", err)
+	}
+	if cfg.API.Port != 9090 {
+		t.Errorf("API.Port = %d, want %d", cfg.API.Port, 9090)
+	}
+}
+
+func TestLoadWithIncludes_ConvergenceSectionOverride(t *testing.T) {
+	fs := fsys.NewFake()
+	fs.Files["/city/city.toml"] = []byte(`
+include = ["infra.toml"]
+
+[workspace]
+name = "test"
+
+[convergence]
+max_per_agent = 2
+max_total = 10
+`)
+	fs.Files["/city/infra.toml"] = []byte(`
+[convergence]
+max_per_agent = 5
+max_total = 20
+`)
+	cfg, _, err := LoadWithIncludes(fs, "/city/city.toml")
+	if err != nil {
+		t.Fatalf("LoadWithIncludes: %v", err)
+	}
+	if cfg.Convergence.MaxPerAgent != 5 {
+		t.Errorf("Convergence.MaxPerAgent = %d, want %d", cfg.Convergence.MaxPerAgent, 5)
+	}
+	if cfg.Convergence.MaxTotal != 20 {
+		t.Errorf("Convergence.MaxTotal = %d, want %d", cfg.Convergence.MaxTotal, 20)
+	}
+}
+
 // initBareRepoWithFragment creates a bare git repo containing a TOML config
 // fragment file. Returns the bare repo path.
 func initBareRepoWithFragment(t *testing.T, fragmentPath, content string) string {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/convergence"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/hooks"
 	"github.com/gastownhall/gascity/internal/runtime"
@@ -142,7 +143,7 @@ func buildOneAgent(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName st
 	}
 
 	// Merge environment layers.
-	env := mergeEnv(passthroughEnv(), expandEnvMap(resolved.Env), expandEnvMap(cfgAgent.Env), agentEnv)
+	env := convergence.ScrubTokenEnv(mergeEnv(passthroughEnv(), expandEnvMap(resolved.Env), expandEnvMap(cfgAgent.Env), agentEnv))
 
 	// Register ACP route on the auto provider for dynamic sessions
 	// (e.g., pool instances) not known at newSessionProvider() time.

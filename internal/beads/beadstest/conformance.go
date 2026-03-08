@@ -535,6 +535,43 @@ func RunStoreTests(t *testing.T, newStore func() beads.Store) {
 	})
 }
 
+// RunMetadataTests runs conformance tests for metadata absent-vs-empty
+// semantics. Call this only for Store implementations that preserve
+// empty-string metadata values (MemStore, BdStore). External script-backed
+// stores (ExecStore) may not preserve this invariant.
+func RunMetadataTests(t *testing.T, newStore func() beads.Store) {
+	t.Helper()
+
+	t.Run("MetadataAbsentVsEmpty", func(t *testing.T) {
+		s := newStore()
+		b, err := s.Create(beads.Bead{Title: "test"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Set metadata to empty string.
+		if err := s.SetMetadata(b.ID, "key", ""); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Get(b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Key present with empty value — comma-ok must distinguish from absent.
+		val, ok := got.Metadata["key"]
+		if !ok {
+			t.Fatal("Metadata[\"key\"] absent, want present with empty value")
+		}
+		if val != "" {
+			t.Errorf("Metadata[\"key\"] = %q, want empty string", val)
+		}
+		// Absent key must return !ok.
+		_, ok = got.Metadata["nonexistent"]
+		if ok {
+			t.Error("Metadata[\"nonexistent\"] present, want absent")
+		}
+	})
+}
+
 // RunSequentialIDTests runs tests that assert gc-N sequential IDs. Call this
 // only for Store implementations that use sequential IDs (MemStore, FileStore).
 func RunSequentialIDTests(t *testing.T, newStore func() beads.Store) {

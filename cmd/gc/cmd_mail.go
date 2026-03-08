@@ -205,12 +205,12 @@ func doMailCheck(mp mail.Provider, recipient string, inject bool, stdout, stderr
 func formatInjectOutput(messages []mail.Message) string {
 	var sb strings.Builder
 	sb.WriteString("<system-reminder>\n")
-	sb.WriteString(fmt.Sprintf("You have %d unread message(s).\n\n", len(messages)))
+	fmt.Fprintf(&sb, "You have %d unread message(s).\n\n", len(messages))
 	for _, m := range messages {
 		if m.Subject != "" {
-			sb.WriteString(fmt.Sprintf("- %s from %s [%s]: %s\n", m.ID, m.From, m.Subject, m.Body))
+			fmt.Fprintf(&sb, "- %s from %s [%s]: %s\n", m.ID, m.From, m.Subject, m.Body)
 		} else {
-			sb.WriteString(fmt.Sprintf("- %s from %s: %s\n", m.ID, m.From, m.Body))
+			fmt.Fprintf(&sb, "- %s from %s: %s\n", m.ID, m.From, m.Body)
 		}
 	}
 	sb.WriteString("\nRun 'gc mail read <id>' for full details, or 'gc mail inbox' to see all.\n")

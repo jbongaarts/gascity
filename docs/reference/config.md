@@ -27,6 +27,7 @@ City is the top-level configuration for a Gas City instance.
 | `automations` | AutomationsConfig |  |  | Automations configures automation settings (skip list). |
 | `api` | APIConfig |  |  | API configures the optional HTTP API server. |
 | `chat_sessions` | ChatSessionsConfig |  |  | ChatSessions configures chat session behavior (auto-suspend). |
+| `convergence` | ConvergenceConfig |  |  | Convergence configures convergence loop limits. |
 
 ## ACPSessionConfig
 
@@ -207,6 +208,15 @@ ChatSessionsConfig configures chat session behavior.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `idle_timeout` | string |  |  | IdleTimeout is the duration after which a detached chat session is auto-suspended. Duration string (e.g., "30m", "1h"). 0 = disabled. |
+
+## ConvergenceConfig
+
+ConvergenceConfig holds convergence loop limits.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `max_per_agent` | integer |  | `2` | MaxPerAgent is the maximum number of active convergence loops per agent. 0 means use default (2). |
+| `max_total` | integer |  | `10` | MaxTotal is the maximum total number of active convergence loops. 0 means use default (10). |
 
 ## DaemonConfig
 

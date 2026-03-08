@@ -772,6 +772,10 @@
         "chat_sessions": {
           "$ref": "#/$defs/ChatSessionsConfig",
           "description": "ChatSessions configures chat session behavior (auto-suspend)."
+        },
+        "convergence": {
+          "$ref": "#/$defs/ConvergenceConfig",
+          "description": "Convergence configures convergence loop limits."
         }
       },
       "additionalProperties": false,
@@ -781,6 +785,23 @@
         "agents"
       ],
       "description": "City is the top-level configuration for a Gas City instance."
+    },
+    "ConvergenceConfig": {
+      "properties": {
+        "max_per_agent": {
+          "type": "integer",
+          "description": "MaxPerAgent is the maximum number of active convergence loops per agent.\n0 means use default (2).",
+          "default": 2
+        },
+        "max_total": {
+          "type": "integer",
+          "description": "MaxTotal is the maximum total number of active convergence loops.\n0 means use default (10).",
+          "default": 10
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ConvergenceConfig holds convergence loop limits."
     },
     "DaemonConfig": {
       "properties": {

@@ -26,6 +26,7 @@ func TestFileStore(t *testing.T) {
 	beadstest.RunSequentialIDTests(t, factory)
 	beadstest.RunCreationOrderTests(t, factory)
 	beadstest.RunDepTests(t, factory)
+	beadstest.RunMetadataTests(t, factory)
 }
 
 func TestFileStorePersistence(t *testing.T) {

@@ -75,6 +75,8 @@ type City struct {
 	API APIConfig `toml:"api,omitempty"`
 	// ChatSessions configures chat session behavior (auto-suspend).
 	ChatSessions ChatSessionsConfig `toml:"chat_sessions,omitempty"`
+	// Convergence configures convergence loop limits.
+	Convergence ConvergenceConfig `toml:"convergence,omitempty"`
 
 	// FormulaLayers holds the resolved formula directories per scope.
 	// Populated during pack expansion in LoadWithIncludes. Not from TOML.
@@ -729,6 +731,32 @@ func (c ChatSessionsConfig) IdleTimeoutDuration() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// ConvergenceConfig holds convergence loop limits.
+type ConvergenceConfig struct {
+	// MaxPerAgent is the maximum number of active convergence loops per agent.
+	// 0 means use default (2).
+	MaxPerAgent int `toml:"max_per_agent,omitempty" jsonschema:"default=2"`
+	// MaxTotal is the maximum total number of active convergence loops.
+	// 0 means use default (10).
+	MaxTotal int `toml:"max_total,omitempty" jsonschema:"default=10"`
+}
+
+// MaxPerAgentOrDefault returns MaxPerAgent, defaulting to 2.
+func (c ConvergenceConfig) MaxPerAgentOrDefault() int {
+	if c.MaxPerAgent <= 0 {
+		return 2
+	}
+	return c.MaxPerAgent
+}
+
+// MaxTotalOrDefault returns MaxTotal, defaulting to 10.
+func (c ConvergenceConfig) MaxTotalOrDefault() int {
+	if c.MaxTotal <= 0 {
+		return 10
+	}
+	return c.MaxTotal
 }
 
 // DaemonConfig holds controller daemon settings.

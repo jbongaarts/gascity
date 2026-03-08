@@ -240,6 +240,15 @@ func mergeFragment(base, fragment *City, fragMeta toml.MetaData, fragPath string
 	if fragMeta.IsDefined("events") {
 		base.Events = fragment.Events
 	}
+	if fragMeta.IsDefined("automations") {
+		base.Automations = fragment.Automations
+	}
+	if fragMeta.IsDefined("api") {
+		base.API = fragment.API
+	}
+	if fragMeta.IsDefined("convergence") {
+		base.Convergence = fragment.Convergence
+	}
 }
 
 // mergePacks additively merges fragment packs into base.
