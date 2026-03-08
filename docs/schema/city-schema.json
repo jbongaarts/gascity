@@ -235,6 +235,39 @@
       ],
       "description": "Agent defines a configured agent in the city."
     },
+    "AgentDefaults": {
+      "properties": {
+        "model": {
+          "type": "string",
+          "description": "Model is the default model name for agents (e.g., \"claude-sonnet-4-6\").\nAgents with their own model override take precedence."
+        },
+        "wake_mode": {
+          "type": "string",
+          "enum": [
+            "resume",
+            "fresh"
+          ],
+          "description": "WakeMode is the default wake mode (\"resume\" or \"fresh\")."
+        },
+        "allow_overlay": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "AllowOverlay lists template fields that sessions may override at\ncreation time (e.g., [\"model\", \"prompt\", \"title\"])."
+        },
+        "allow_env_override": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "AllowEnvOverride lists environment variable names that sessions may\noverride at creation time. Names must match ^[A-Z][A-Z0-9_]{0,127}$."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "AgentDefaults provides default values applied to all agents that don't explicitly override them."
+    },
     "AgentOverride": {
       "properties": {
         "agent": {
@@ -776,6 +809,10 @@
         "convergence": {
           "$ref": "#/$defs/ConvergenceConfig",
           "description": "Convergence configures convergence loop limits."
+        },
+        "agent_defaults": {
+          "$ref": "#/$defs/AgentDefaults",
+          "description": "AgentDefaults provides default values applied to all agents that\ndon't override them. Useful for setting city-wide model, wake_mode,\nand overlay allowlists."
         }
       },
       "additionalProperties": false,

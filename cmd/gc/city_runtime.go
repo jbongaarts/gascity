@@ -525,18 +525,11 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, agents []agent.Age
 		return
 	}
 
-	// Load open session beads.
-	sessionBeads, err := store.ListByLabel(sessionBeadLabel, 0)
+	// Load open session beads (both legacy and new types, deduplicated).
+	open, err := loadSessionBeads(store)
 	if err != nil {
-		fmt.Fprintf(cr.stderr, "%s: listing session beads: %v\n", cr.logPrefix, err) //nolint:errcheck
+		fmt.Fprintf(cr.stderr, "%s: loading session beads: %v\n", cr.logPrefix, err) //nolint:errcheck
 		return
-	}
-	// Filter to open beads only.
-	var open []beads.Bead
-	for _, b := range sessionBeads {
-		if b.Status != "closed" {
-			open = append(open, b)
-		}
 	}
 
 	// Index agents by session name for O(1) lookup.

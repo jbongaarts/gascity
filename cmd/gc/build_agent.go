@@ -1,19 +1,13 @@
 package main
 
 import (
-	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/config"
-	"github.com/gastownhall/gascity/internal/convergence"
 	"github.com/gastownhall/gascity/internal/fsys"
-	"github.com/gastownhall/gascity/internal/hooks"
 	"github.com/gastownhall/gascity/internal/runtime"
 	sessionauto "github.com/gastownhall/gascity/internal/runtime/auto"
 )
@@ -47,149 +41,27 @@ type agentBuildParams struct {
 // qualifiedName is the agent's canonical identity (e.g., "mayor" or
 // "hello-world/polecat-2"). fpExtra carries additional data for config
 // fingerprinting (e.g., pool bounds); pass nil for pool instances.
+//
+// Internally delegates to resolveTemplate() for pure parameter resolution,
+// then handles ACP route registration (the only side effect) and creates
+// the agent.Agent.
 func buildOneAgent(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName string, fpExtra map[string]string, onStop ...func() error) (agent.Agent, error) {
-	// Resolve provider preset.
-	resolved, err := config.ResolveProvider(cfgAgent, p.workspace, p.providers, p.lookPath)
+	params, err := resolveTemplate(p, cfgAgent, qualifiedName, fpExtra)
 	if err != nil {
-		return nil, fmt.Errorf("agent %q: %w", qualifiedName, err)
+		return nil, err
 	}
-
-	// Validate session vs provider compatibility.
-	if cfgAgent.Session == "acp" && !resolved.SupportsACP {
-		return nil, fmt.Errorf("agent %q: session = \"acp\" but provider %q does not support ACP (set supports_acp = true on the provider)", qualifiedName, resolved.Name)
-	}
-
-	// Expand dir template (e.g. ".gc/worktrees/{{.Rig}}/{{.Agent}}").
-	expandedDir := expandDirTemplate(cfgAgent.Dir, SessionSetupContext{
-		Agent:    qualifiedName,
-		Rig:      cfgAgent.Dir,
-		CityRoot: p.cityPath,
-		CityName: p.cityName,
-	})
-	workDir, err := resolveAgentDir(p.cityPath, expandedDir)
-	if err != nil {
-		return nil, fmt.Errorf("agent %q: %w", qualifiedName, err)
-	}
-
-	// Install provider hooks if configured.
-	if ih := config.ResolveInstallHooks(cfgAgent, p.workspace); len(ih) > 0 {
-		if hErr := hooks.Install(p.fs, p.cityPath, workDir, ih); hErr != nil {
-			fmt.Fprintf(p.stderr, "agent %q: hooks: %v\n", qualifiedName, hErr) //nolint:errcheck // best-effort stderr
-		}
-	}
-
-	// Resolve overlay directory path (provider handles the copy).
-	overlayDir := resolveOverlayDir(cfgAgent.OverlayDir, p.cityPath)
-
-	// Build copy_files for container providers.
-	var copyFiles []runtime.CopyEntry
-	command := resolved.CommandString()
-	if sa := settingsArgs(p.cityPath, resolved.Name); sa != "" {
-		command = command + " " + sa
-		settingsFile := filepath.Join(p.cityPath, ".gc", "settings.json")
-		copyFiles = append(copyFiles, runtime.CopyEntry{Src: settingsFile, RelDst: filepath.Join(".gc", "settings.json")})
-	}
-	scriptsDir := filepath.Join(p.cityPath, ".gc", "scripts")
-	if info, sErr := os.Stat(scriptsDir); sErr == nil && info.IsDir() {
-		copyFiles = append(copyFiles, runtime.CopyEntry{Src: scriptsDir, RelDst: filepath.Join(".gc", "scripts")})
-	}
-	copyFiles = stageHookFiles(copyFiles, p.cityPath, workDir)
-
-	// Resolve rig association for prompt context.
-	rigName := resolveRigForAgent(workDir, p.rigs)
-
-	// Compute session name early — needed for env vars and later template expansion.
-	sessName := agent.SessionNameFor(p.cityName, qualifiedName, p.sessionTemplate)
-
-	// Build agent environment.
-	// Emit both new GC_SESSION_* vars and legacy GC_AGENT/GC_CITY/GC_DIR
-	// vars during the migration transition period (removed in Phase 5).
-	agentEnv := map[string]string{
-		// New canonical vars
-		"GC_SESSION_NAME": sessName,
-		"GC_TEMPLATE":     templateNameFor(cfgAgent, qualifiedName),
-		// Legacy compat vars
-		"GC_AGENT": qualifiedName,
-		"GC_CITY":  p.cityPath,
-		"GC_DIR":   workDir,
-	}
-	if rigName != "" {
-		agentEnv["GC_RIG"] = rigName
-	}
-
-	// Render prompt with beacon.
-	var prompt string
-	if resolved.PromptMode != "none" {
-		fragments := mergeFragmentLists(p.globalFragments, cfgAgent.InjectFragments)
-		prompt = renderPrompt(p.fs, p.cityPath, p.cityName, cfgAgent.PromptTemplate, PromptContext{
-			CityRoot:      p.cityPath,
-			AgentName:     qualifiedName,
-			TemplateName:  cfgAgent.Name,
-			RigName:       rigName,
-			WorkDir:       workDir,
-			IssuePrefix:   findRigPrefix(rigName, p.rigs),
-			DefaultBranch: defaultBranchFor(workDir),
-			WorkQuery:     cfgAgent.EffectiveWorkQuery(),
-			SlingQuery:    cfgAgent.EffectiveSlingQuery(),
-			Env:           cfgAgent.Env,
-		}, p.sessionTemplate, p.stderr, p.packDirs, fragments)
-		hasHooks := config.AgentHasHooks(cfgAgent, p.workspace, resolved.Name)
-		beacon := runtime.FormatBeaconAt(p.cityName, qualifiedName, !hasHooks, p.beaconTime)
-		if prompt != "" {
-			prompt = beacon + "\n\n" + prompt
-		} else {
-			prompt = beacon
-		}
-	}
-
-	// Merge environment layers.
-	env := convergence.ScrubTokenEnv(mergeEnv(passthroughEnv(), expandEnvMap(resolved.Env), expandEnvMap(cfgAgent.Env), agentEnv))
 
 	// Register ACP route on the auto provider for dynamic sessions
 	// (e.g., pool instances) not known at newSessionProvider() time.
-	if cfgAgent.Session == "acp" {
+	if params.IsACP {
 		if autoSP, ok := p.sp.(*sessionauto.Provider); ok {
-			autoSP.RouteACP(sessName)
+			autoSP.RouteACP(params.SessionName)
 		}
 	}
 
-	configDir := p.cityPath
-	if cfgAgent.SourceDir != "" {
-		configDir = cfgAgent.SourceDir
-	}
-	setupCtx := SessionSetupContext{
-		Session:   sessName,
-		Agent:     qualifiedName,
-		Rig:       rigName,
-		CityRoot:  p.cityPath,
-		CityName:  p.cityName,
-		WorkDir:   workDir,
-		ConfigDir: configDir,
-	}
-	if strings.Contains(command, "{{") {
-		expanded := expandSessionSetup([]string{command}, setupCtx)
-		command = expanded[0]
-	}
-	expandedSetup := expandSessionSetup(cfgAgent.SessionSetup, setupCtx)
-	resolvedScript := resolveSetupScript(cfgAgent.SessionSetupScript, p.cityPath)
-	expandedPreStart := expandSessionSetup(cfgAgent.PreStart, setupCtx)
-	expandedLive := expandSessionSetup(cfgAgent.SessionLive, setupCtx)
-
-	hints := agent.StartupHints{
-		ReadyPromptPrefix:      resolved.ReadyPromptPrefix,
-		ReadyDelayMs:           resolved.ReadyDelayMs,
-		ProcessNames:           resolved.ProcessNames,
-		EmitsPermissionWarning: resolved.EmitsPermissionWarning,
-		Nudge:                  cfgAgent.Nudge,
-		PreStart:               expandedPreStart,
-		SessionSetup:           expandedSetup,
-		SessionSetupScript:     resolvedScript,
-		SessionLive:            expandedLive,
-		PackOverlayDirs:        effectiveOverlayDirs(p.packOverlayDirs, p.rigOverlayDirs, rigName),
-		OverlayDir:             overlayDir,
-		CopyFiles:              copyFiles,
-	}
-	return agent.New(qualifiedName, p.cityName, command, prompt, env, hints, workDir, p.sessionTemplate, fpExtra, p.sp, onStop...), nil
+	return agent.New(qualifiedName, p.cityName, params.Command, params.Prompt,
+		params.Env, params.Hints, params.WorkDir, p.sessionTemplate,
+		params.FPExtra, p.sp, onStop...), nil
 }
 
 // newAgentBuildParams constructs agentBuildParams from the common startup values.

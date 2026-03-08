@@ -28,6 +28,7 @@ City is the top-level configuration for a Gas City instance.
 | `api` | APIConfig |  |  | API configures the optional HTTP API server. |
 | `chat_sessions` | ChatSessionsConfig |  |  | ChatSessions configures chat session behavior (auto-suspend). |
 | `convergence` | ConvergenceConfig |  |  | Convergence configures convergence loop limits. |
+| `agent_defaults` | AgentDefaults |  |  | AgentDefaults provides default values applied to all agents that don't override them. Useful for setting city-wide model, wake_mode, and overlay allowlists. |
 
 ## ACPSessionConfig
 
@@ -89,6 +90,17 @@ Agent defines a configured agent in the city.
 | `multi` | boolean |  |  | Multi marks this agent as a multi-instance template. Users manually start/stop named instances via "gc agent start/stop/destroy". Unlike pools (declarative auto-scaling), multi is imperative. Multi and pool are mutually exclusive. |
 | `depends_on` | []string |  |  | DependsOn lists agent names that must be awake before this agent wakes. Used for dependency-ordered startup and shutdown. Validated for cycles at config load time. |
 | `wake_mode` | string |  |  | WakeMode controls context freshness across sleep/wake cycles. "resume" (default): reuse provider session key for conversation continuity. "fresh": start a new provider session on every wake (polecat pattern). Enum: `resume`, `fresh` |
+
+## AgentDefaults
+
+AgentDefaults provides default values applied to all agents that don't explicitly override them.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `model` | string |  |  | Model is the default model name for agents (e.g., "claude-sonnet-4-6"). Agents with their own model override take precedence. |
+| `wake_mode` | string |  |  | WakeMode is the default wake mode ("resume" or "fresh"). Enum: `resume`, `fresh` |
+| `allow_overlay` | []string |  |  | AllowOverlay lists template fields that sessions may override at creation time (e.g., ["model", "prompt", "title"]). |
+| `allow_env_override` | []string |  |  | AllowEnvOverride lists environment variable names that sessions may override at creation time. Names must match ^[A-Z][A-Z0-9_]{0,127}$. |
 
 ## AgentOverride
 

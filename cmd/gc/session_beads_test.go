@@ -563,3 +563,215 @@ func TestSyncSessionBeads_ReturnsIndex(t *testing.T) {
 		t.Error("after suspend, index should not contain worker")
 	}
 }
+
+// --- loadSessionBeads tests (Phase 0a: dual bead type recognition) ---
+
+func TestLoadSessionBeads_LegacyOnly(t *testing.T) {
+	store := beads.NewMemStore()
+
+	// Create a legacy bead.
+	_, err := store.Create(beads.Bead{
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker",
+			"state":        "active",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := loadSessionBeads(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 bead, got %d", len(result))
+	}
+	if result[0].Metadata["session_name"] != "worker" {
+		t.Errorf("session_name = %q, want worker", result[0].Metadata["session_name"])
+	}
+}
+
+func TestLoadSessionBeads_NewTypeOnly(t *testing.T) {
+	store := beads.NewMemStore()
+
+	_, err := store.Create(beads.Bead{
+		Title:  "worker",
+		Type:   "session",
+		Labels: []string{newSessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker",
+			"state":        "active",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := loadSessionBeads(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 bead, got %d", len(result))
+	}
+}
+
+func TestLoadSessionBeads_DeduplicatesBySessionName(t *testing.T) {
+	store := beads.NewMemStore()
+
+	// Create both a legacy and a new-type bead with the same session_name.
+	_, _ = store.Create(beads.Bead{
+		Title:  "worker-legacy",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker",
+			"state":        "active",
+		},
+	})
+	_, _ = store.Create(beads.Bead{
+		Title:  "worker-new",
+		Type:   "session",
+		Labels: []string{newSessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker",
+			"state":        "active",
+		},
+	})
+
+	result, err := loadSessionBeads(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 1 {
+		t.Fatalf("expected 1 bead (deduped), got %d", len(result))
+	}
+	// New-type bead takes precedence.
+	if result[0].Title != "worker-new" {
+		t.Errorf("expected new-type bead to win, got title=%q", result[0].Title)
+	}
+}
+
+func TestLoadSessionBeads_LegacyStateMapping(t *testing.T) {
+	store := beads.NewMemStore()
+
+	tests := []struct {
+		legacyState string
+		wantState   string
+	}{
+		{"stopped", "closed"},
+		{"orphaned", "suspended"},
+		{"active", "active"},
+		{"suspended", "suspended"},
+	}
+	for _, tt := range tests {
+		store := beads.NewMemStore() // fresh store per subtest
+		_, _ = store.Create(beads.Bead{
+			Title:  "worker",
+			Type:   sessionBeadType,
+			Labels: []string{sessionBeadLabel},
+			Metadata: map[string]string{
+				"session_name": "worker",
+				"state":        tt.legacyState,
+			},
+		})
+
+		result, err := loadSessionBeads(store)
+		if err != nil {
+			t.Fatalf("state=%q: %v", tt.legacyState, err)
+		}
+		if len(result) != 1 {
+			t.Fatalf("state=%q: expected 1 bead, got %d", tt.legacyState, len(result))
+		}
+		if result[0].Metadata["state"] != tt.wantState {
+			t.Errorf("state=%q: mapped to %q, want %q",
+				tt.legacyState, result[0].Metadata["state"], tt.wantState)
+		}
+	}
+	_ = store // suppress unused warning
+}
+
+func TestLoadSessionBeads_HybridPoolOccupancy(t *testing.T) {
+	store := beads.NewMemStore()
+
+	// Two legacy beads + one new-type bead, all for different session names.
+	_, _ = store.Create(beads.Bead{
+		Title:  "worker-1",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker-1",
+			"template":     "worker",
+			"state":        "active",
+			"pool_slot":    "1",
+		},
+	})
+	_, _ = store.Create(beads.Bead{
+		Title:  "worker-2",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker-2",
+			"template":     "worker",
+			"state":        "active",
+			"pool_slot":    "2",
+		},
+	})
+	_, _ = store.Create(beads.Bead{
+		Title:  "worker-3",
+		Type:   "session",
+		Labels: []string{newSessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker-3",
+			"template":     "worker",
+			"state":        "active",
+			"pool_slot":    "3",
+		},
+	})
+
+	result, err := loadSessionBeads(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All 3 should be returned (no name collision).
+	if len(result) != 3 {
+		t.Fatalf("expected 3 beads for pool occupancy, got %d", len(result))
+	}
+}
+
+func TestLoadSessionBeads_NilStore(t *testing.T) {
+	result, err := loadSessionBeads(nil)
+	if err != nil {
+		t.Fatalf("nil store should not error: %v", err)
+	}
+	if result != nil {
+		t.Errorf("nil store should return nil, got %v", result)
+	}
+}
+
+func TestLoadSessionBeads_SkipsClosedBeads(t *testing.T) {
+	store := beads.NewMemStore()
+
+	b, _ := store.Create(beads.Bead{
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name": "worker",
+			"state":        "active",
+		},
+	})
+	_ = store.Close(b.ID)
+
+	result, err := loadSessionBeads(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Errorf("expected 0 beads (closed), got %d", len(result))
+	}
+}

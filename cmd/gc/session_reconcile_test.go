@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -666,5 +667,53 @@ func TestFindAgentByTemplate(t *testing.T) {
 	}
 	if a := findAgentByTemplate(cfg, ""); a != nil {
 		t.Error("expected nil for empty template")
+	}
+}
+
+// --- isKnownState tests (Phase 0b: forward compatibility) ---
+
+func TestIsKnownState_KnownStates(t *testing.T) {
+	known := []string{
+		"active", "asleep", "awake", "stopped", "suspended",
+		"orphaned", "closed", "quarantined", "creating", "",
+	}
+	for _, state := range known {
+		session := makeBead("b1", map[string]string{"state": state})
+		if !isKnownState(session) {
+			t.Errorf("state %q should be known", state)
+		}
+	}
+}
+
+func TestIsKnownState_UnknownStates(t *testing.T) {
+	unknown := []string{"draining", "archived", "future-state"}
+	for _, state := range unknown {
+		session := makeBead("b1", map[string]string{"state": state})
+		if isKnownState(session) {
+			t.Errorf("state %q should be unknown", state)
+		}
+	}
+}
+
+func TestForwardCompatibility_UnknownState(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.addAgent("worker", false)
+
+	// Create a session bead with a future state that the current reconciler
+	// doesn't understand.
+	session := env.createSessionBead("worker", "worker")
+	_ = env.store.SetMetadata(session.ID, "state", "draining")
+	session.Metadata["state"] = "draining"
+
+	// Should not panic, should skip the unknown-state bead.
+	woken := env.reconcile([]beads.Bead{session})
+	if woken != 0 {
+		t.Errorf("expected 0 woken for unknown state, got %d", woken)
+	}
+
+	// The warning should appear in stderr.
+	if !strings.Contains(env.stderr.String(), "unknown state") {
+		t.Errorf("expected warning about unknown state in stderr, got: %s", env.stderr.String())
 	}
 }

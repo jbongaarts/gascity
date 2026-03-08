@@ -163,6 +163,16 @@ func reconcileSessionBeads(
 	wakeCount := 0
 	for i := range ordered {
 		session := &ordered[i]
+
+		// Skip beads with unrecognized states. This enables forward-compatible
+		// rollback: if a newer version writes "draining" or "archived", the
+		// older reconciler ignores those beads rather than crashing.
+		if !isKnownState(*session) {
+			fmt.Fprintf(stderr, "session reconciler: skipping %s with unknown state %q\n", //nolint:errcheck // best-effort stderr
+				session.Metadata["session_name"], session.Metadata["state"])
+			continue
+		}
+
 		name := session.Metadata["session_name"]
 		a := agentIndex[name]
 

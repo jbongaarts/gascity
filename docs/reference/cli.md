@@ -24,6 +24,7 @@ gc [flags]
 | [gc build-image](#gc-build-image) | Build a prebaked agent container image |
 | [gc cities](#gc-cities) | List registered cities |
 | [gc config](#gc-config) | Inspect and validate city configuration |
+| [gc converge](#gc-converge) | Manage convergence loops (bounded iterative refinement) |
 | [gc convoy](#gc-convoy) | Manage convoys (batch work tracking) |
 | [gc daemon](#gc-daemon) | Manage the city daemon (background controller) |
 | [gc dashboard](#gc-dashboard) | Web dashboard for monitoring the city |
@@ -593,6 +594,120 @@ gc config show
 | `-f`, `--file` | stringArray |  | additional config files to layer (can be repeated) |
 | `--provenance` | bool |  | show where each config element originated |
 | `--validate` | bool |  | validate config and exit (0 = valid, 1 = errors) |
+
+## gc converge
+
+Convergence loops are bounded multi-step refinement cycles.
+
+A root bead + formula + gate = repeat until the gate passes or max
+iterations are reached. The controller processes wisp_closed events
+and drives the loop automatically.
+
+```
+gc converge
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| [gc converge approve](#gc-converge-approve) | Approve and close a convergence loop (manual gate) |
+| [gc converge create](#gc-converge-create) | Create a convergence loop |
+| [gc converge iterate](#gc-converge-iterate) | Force next iteration (manual gate) |
+| [gc converge list](#gc-converge-list) | List convergence loops |
+| [gc converge retry](#gc-converge-retry) | Retry a terminated convergence loop |
+| [gc converge status](#gc-converge-status) | Show convergence loop status |
+| [gc converge stop](#gc-converge-stop) | Stop a convergence loop |
+| [gc converge test-gate](#gc-converge-test-gate) | Dry-run the gate condition (no state changes) |
+
+## gc converge approve
+
+Approve and close a convergence loop (manual gate)
+
+```
+gc converge approve <bead-id>
+```
+
+## gc converge create
+
+Create a convergence loop
+
+```
+gc converge create [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--evaluate-prompt` | string |  | Custom evaluate prompt (overrides formula default) |
+| `--formula` | string |  | Formula to use (required) |
+| `--gate` | string | `manual` | Gate mode: manual, condition, hybrid |
+| `--gate-condition` | string |  | Path to gate condition script |
+| `--gate-timeout` | string | `30s` | Gate execution timeout |
+| `--gate-timeout-action` | string | `iterate` | Action on gate timeout: iterate, retry, manual, terminate |
+| `--max-iterations` | int | `5` | Maximum iterations |
+| `--target` | string |  | Target agent (required) |
+| `--title` | string |  | Convergence loop title |
+| `--var` | stringArray |  | Template variable (key=value, repeatable) |
+
+## gc converge iterate
+
+Force next iteration (manual gate)
+
+```
+gc converge iterate <bead-id>
+```
+
+## gc converge list
+
+List convergence loops
+
+```
+gc converge list [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--all` | bool |  | Include closed/terminated loops |
+| `--json` | bool |  | Output as JSON |
+| `--state` | string |  | Filter by state (active, waiting_manual, terminated) |
+
+## gc converge retry
+
+Retry a terminated convergence loop
+
+```
+gc converge retry <bead-id> [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--max-iterations` | int |  | Override max iterations (default: inherit from source) |
+
+## gc converge status
+
+Show convergence loop status
+
+```
+gc converge status <bead-id> [flags]
+```
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--json` | bool |  | Output as JSON |
+
+## gc converge stop
+
+Stop a convergence loop
+
+```
+gc converge stop <bead-id>
+```
+
+## gc converge test-gate
+
+Dry-run the gate condition (no state changes)
+
+```
+gc converge test-gate <bead-id>
+```
 
 ## gc convoy
 
@@ -1502,6 +1617,7 @@ gc session
 | [gc session prune](#gc-session-prune) | Close old suspended sessions |
 | [gc session rename](#gc-session-rename) | Rename a session |
 | [gc session suspend](#gc-session-suspend) | Suspend a session (save state, free resources) |
+| [gc session wake](#gc-session-wake) | Wake a session (clear hold and quarantine) |
 
 ## gc session attach
 
@@ -1511,16 +1627,20 @@ If the session is active with a live tmux session, reattaches.
 If the session is suspended or the tmux session died, resumes
 using the provider's resume mechanism (if supported) or restarts.
 
+Accepts a session ID (e.g., gc-42) or template name (e.g., overseer).
+
 ```
-gc session attach <session-id>
+gc session attach <session-id-or-name>
 ```
 
 ## gc session close
 
 End a conversation. Stops the runtime if active and closes the bead.
 
+Accepts a session ID (e.g., gc-42) or template name (e.g., overseer).
+
 ```
-gc session close <session-id>
+gc session close <session-id-or-name>
 ```
 
 ## gc session list
@@ -1564,7 +1684,7 @@ gc session new helper
 View session output without attaching
 
 ```
-gc session peek <session-id> [flags]
+gc session peek <session-id-or-name> [flags]
 ```
 
 | Flag | Type | Default | Description |
@@ -1596,7 +1716,7 @@ gc session prune --before 7d
 Rename a session
 
 ```
-gc session rename <session-id> <title>
+gc session rename <session-id-or-name> <title>
 ```
 
 ## gc session suspend
@@ -1604,8 +1724,31 @@ gc session rename <session-id> <title>
 Suspend an active session by stopping its runtime process.
 The session bead persists and can be resumed later.
 
+Accepts a session ID (e.g., gc-42) or template name (e.g., overseer).
+
 ```
-gc session suspend <session-id>
+gc session suspend <session-id-or-name>
+```
+
+## gc session wake
+
+Release a user hold and/or crash-loop quarantine on a session.
+
+After waking, the reconciler will start the session on its next tick
+if it has wake reasons (e.g., a matching config agent). If the session
+has no wake reasons, it remains asleep.
+
+Accepts a session ID (e.g., gc-42) or template name (e.g., overseer).
+
+```
+gc session wake <session-id-or-name>
+```
+
+**Example:**
+
+```
+gc session wake gc-42
+  gc session wake overseer
 ```
 
 ## gc skill

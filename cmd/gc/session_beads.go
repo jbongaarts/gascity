@@ -22,6 +22,81 @@ const sessionBeadLabel = "gc:agent_session"
 // sessionBeadType is the bead type for config agent session beads.
 const sessionBeadType = "agent_session"
 
+// newSessionBeadLabel is the label for session-first beads (type="session").
+const newSessionBeadLabel = "gc:session"
+
+// legacyStateMap maps legacy bead states to the session-first state model.
+// Legacy beads (type="agent_session") used different state names.
+var legacyStateMap = map[string]string{
+	"stopped":  "closed",
+	"orphaned": "suspended",
+	// "active" and "suspended" pass through unchanged.
+}
+
+// loadSessionBeads queries both gc:agent_session and gc:session labeled beads,
+// deduplicates by session_name, and returns the unified list. New-type beads
+// take precedence when both exist for the same session_name.
+//
+// Legacy beads are normalized: their state is mapped via legacyStateMap so
+// downstream reconciliation sees a uniform state vocabulary. Legacy beads
+// also count against pool occupancy (creating + active + suspended + quarantined).
+func loadSessionBeads(store beads.Store) ([]beads.Bead, error) {
+	if store == nil {
+		return nil, nil
+	}
+
+	// Query both bead types.
+	legacy, err := store.ListByLabel(sessionBeadLabel, 0)
+	if err != nil {
+		return nil, fmt.Errorf("listing legacy session beads: %w", err)
+	}
+	newer, err := store.ListByLabel(newSessionBeadLabel, 0)
+	if err != nil {
+		return nil, fmt.Errorf("listing session beads: %w", err)
+	}
+
+	// Index new-type beads by session_name for dedup.
+	newByName := make(map[string]beads.Bead, len(newer))
+	for _, b := range newer {
+		if b.Status == "closed" {
+			continue
+		}
+		if sn := b.Metadata["session_name"]; sn != "" {
+			newByName[sn] = b
+		}
+	}
+
+	// Build result: start with new-type beads.
+	result := make([]beads.Bead, 0, len(newer)+len(legacy))
+	for _, b := range newer {
+		if b.Status == "closed" {
+			continue
+		}
+		result = append(result, b)
+	}
+
+	// Add legacy beads, skipping those with a new-type counterpart.
+	for _, b := range legacy {
+		if b.Status == "closed" {
+			continue
+		}
+		sn := b.Metadata["session_name"]
+		if sn == "" {
+			continue
+		}
+		if _, hasNew := newByName[sn]; hasNew {
+			continue // new-type bead takes precedence
+		}
+		// Normalize legacy state.
+		if mapped, ok := legacyStateMap[b.Metadata["state"]]; ok {
+			b.Metadata["state"] = mapped
+		}
+		result = append(result, b)
+	}
+
+	return result, nil
+}
+
 // syncSessionBeads ensures every config agent has a corresponding session bead.
 // This is an additive side-effect — it creates beads for agents that don't have
 // them and updates metadata for those that do. It does NOT change agent behavior;

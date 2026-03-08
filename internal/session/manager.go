@@ -26,6 +26,19 @@ const (
 	StateActive State = "active"
 	// StateSuspended means the conversation is paused with no runtime resources.
 	StateSuspended State = "suspended"
+	// StateCreating means the session bead has been written but the runtime
+	// process has not yet been confirmed alive. Counts against pool occupancy.
+	StateCreating State = "creating"
+	// StateDraining means the session is being gracefully stopped (in-flight
+	// work completing). The pool routing label has been removed so no new
+	// work is routed to this session.
+	StateDraining State = "draining"
+	// StateArchived means the session completed its drain and is retained
+	// for history. Does NOT count against pool occupancy.
+	StateArchived State = "archived"
+	// StateQuarantined means the session hit the crash-loop threshold and
+	// is temporarily blocked from waking. Counts against pool occupancy.
+	StateQuarantined State = "quarantined"
 )
 
 // BeadType is the bead type for chat sessions.
@@ -261,6 +274,61 @@ func (m *Manager) Close(id string) error {
 	}
 
 	return m.store.Close(id)
+}
+
+// BeginDrain transitions a session to the draining state. The caller is
+// responsible for signaling the runtime process to finish its work.
+func (m *Manager) BeginDrain(id, reason string) error {
+	batch := map[string]string{
+		"state":        string(StateDraining),
+		"state_reason": reason,
+		"drain_at":     time.Now().UTC().Format(time.RFC3339),
+	}
+	return m.store.SetMetadataBatch(id, batch)
+}
+
+// Archive transitions a session from draining to archived. The runtime
+// process should already be stopped.
+func (m *Manager) Archive(id, reason string) error {
+	batch := map[string]string{
+		"state":        string(StateArchived),
+		"state_reason": reason,
+		"archived_at":  time.Now().UTC().Format(time.RFC3339),
+	}
+	return m.store.SetMetadataBatch(id, batch)
+}
+
+// Quarantine marks a session as crash-quarantined until the given time.
+func (m *Manager) Quarantine(id string, until time.Time, cycle int) error {
+	batch := map[string]string{
+		"state":             string(StateQuarantined),
+		"state_reason":      "crash-loop",
+		"quarantined_until": until.UTC().Format(time.RFC3339),
+		"quarantine_cycle":  fmt.Sprintf("%d", cycle),
+	}
+	return m.store.SetMetadataBatch(id, batch)
+}
+
+// Reactivate transitions a session from archived or quarantined back to
+// active (or creating, depending on caller's next step).
+func (m *Manager) Reactivate(id string) error {
+	batch := map[string]string{
+		"state":             string(StateActive),
+		"state_reason":      "reactivated",
+		"quarantined_until": "",
+		"quarantine_cycle":  "",
+		"archived_at":       "",
+	}
+	return m.store.SetMetadataBatch(id, batch)
+}
+
+// ConfirmCreation transitions a session from creating to active after the
+// runtime process has been confirmed alive.
+func (m *Manager) ConfirmCreation(id string) error {
+	return m.store.SetMetadataBatch(id, map[string]string{
+		"state":        string(StateActive),
+		"state_reason": "creation_complete",
+	})
 }
 
 // Rename updates the title of a chat session.

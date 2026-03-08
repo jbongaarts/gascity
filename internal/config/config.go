@@ -77,6 +77,10 @@ type City struct {
 	ChatSessions ChatSessionsConfig `toml:"chat_sessions,omitempty"`
 	// Convergence configures convergence loop limits.
 	Convergence ConvergenceConfig `toml:"convergence,omitempty"`
+	// AgentDefaults provides default values applied to all agents that
+	// don't override them. Useful for setting city-wide model, wake_mode,
+	// and overlay allowlists.
+	AgentDefaults AgentDefaults `toml:"agent_defaults,omitempty"`
 
 	// FormulaLayers holds the resolved formula directories per scope.
 	// Populated during pack expansion in LoadWithIncludes. Not from TOML.
@@ -895,6 +899,23 @@ func (c *City) FormulasDir() string {
 		return c.Formulas.Dir
 	}
 	return ".gc/formulas"
+}
+
+// AgentDefaults provides default values applied to all agents that don't
+// explicitly override them. Declared once at the city level via
+// [agent_defaults] in city.toml.
+type AgentDefaults struct {
+	// Model is the default model name for agents (e.g., "claude-sonnet-4-6").
+	// Agents with their own model override take precedence.
+	Model string `toml:"model,omitempty"`
+	// WakeMode is the default wake mode ("resume" or "fresh").
+	WakeMode string `toml:"wake_mode,omitempty" jsonschema:"enum=resume,enum=fresh"`
+	// AllowOverlay lists template fields that sessions may override at
+	// creation time (e.g., ["model", "prompt", "title"]).
+	AllowOverlay []string `toml:"allow_overlay,omitempty"`
+	// AllowEnvOverride lists environment variable names that sessions may
+	// override at creation time. Names must match ^[A-Z][A-Z0-9_]{0,127}$.
+	AllowEnvOverride []string `toml:"allow_env_override,omitempty"`
 }
 
 // PoolConfig defines elastic pool parameters for an agent. When present

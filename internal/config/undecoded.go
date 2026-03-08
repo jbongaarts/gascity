@@ -111,6 +111,7 @@ func knownTOMLKeys() []string {
 		reflect.TypeOf(AutomationsConfig{}),
 		reflect.TypeOf(APIConfig{}),
 		reflect.TypeOf(ConvergenceConfig{}),
+		reflect.TypeOf(AgentDefaults{}),
 	}
 	for _, t := range types {
 		collectTOMLTags(t, seen)
