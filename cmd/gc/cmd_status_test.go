@@ -29,7 +29,7 @@ func TestDoRigStatus(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := doRigStatus(sp, dops, rig, agents, "city", "", &stdout, &stderr)
+	code := doRigStatus(sp, dops, rig, agents, "", "city", "", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0; stderr: %s", code, stderr.String())
 	}
@@ -64,7 +64,7 @@ func TestDoRigStatusSuspendedRig(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := doRigStatus(sp, dops, rig, agents, "city", "", &stdout, &stderr)
+	code := doRigStatus(sp, dops, rig, agents, "", "city", "", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0", code)
 	}
@@ -88,7 +88,7 @@ func TestDoRigStatusWithDraining(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := doRigStatus(sp, dops, rig, agents, "city", "", &stdout, &stderr)
+	code := doRigStatus(sp, dops, rig, agents, "", "city", "", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0", code)
 	}
@@ -110,7 +110,7 @@ func TestDoRigStatusSuspendedAgent(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := doRigStatus(sp, dops, rig, agents, "city", "", &stdout, &stderr)
+	code := doRigStatus(sp, dops, rig, agents, "", "city", "", &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, want 0", code)
 	}

@@ -82,7 +82,7 @@ func cmdRigStatus(args []string, stdout, stderr io.Writer) int {
 	}
 	sp := newSessionProvider()
 	dops := newDrainOps(sp)
-	return doRigStatus(sp, dops, rig, rigAgents, cityName, cfg.Workspace.SessionTemplate, stdout, stderr)
+	return doRigStatus(sp, dops, rig, rigAgents, cityPath, cityName, cfg.Workspace.SessionTemplate, stdout, stderr)
 }
 
 // doRigStatus prints rig info and per-agent running state.
@@ -91,7 +91,7 @@ func doRigStatus(
 	dops drainOps,
 	rig config.Rig,
 	agents []config.Agent,
-	cityName, sessionTemplate string,
+	cityPath, cityName, sessionTemplate string,
 	stdout, stderr io.Writer,
 ) int {
 	_ = stderr // reserved for future error reporting
@@ -109,12 +109,12 @@ func doRigStatus(
 	for _, a := range agents {
 		pool := a.EffectivePool()
 		if !pool.IsMultiInstance() {
-			sn := sessionName(nil, cityName, a.QualifiedName(), sessionTemplate)
+			sn := cliSessionName(cityPath, cityName, a.QualifiedName(), sessionTemplate)
 			status := agentStatusLine(sp, dops, sn, a.Suspended)
 			fmt.Fprintf(stdout, "    %-12s%s\n", a.QualifiedName(), status) //nolint:errcheck // best-effort stdout
 		} else {
 			for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, pool, cityName, sessionTemplate, sp) {
-				sn := sessionName(nil, cityName, qualifiedInstance, sessionTemplate)
+				sn := cliSessionName(cityPath, cityName, qualifiedInstance, sessionTemplate)
 				status := agentStatusLine(sp, dops, sn, a.Suspended)
 				fmt.Fprintf(stdout, "    %-12s%s\n", qualifiedInstance, status) //nolint:errcheck // best-effort stdout
 			}

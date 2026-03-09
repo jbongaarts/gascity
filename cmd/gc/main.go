@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
@@ -153,7 +154,12 @@ func sessionName(store beads.Store, cityName, agentName, sessionTemplate string)
 // cliStoreCache caches the bead store for CLI commands that call
 // cliSessionName repeatedly with the same cityPath. This avoids
 // opening the store on every call in loops over agents.
+//
+// Thread safety: CLI commands are single-threaded (cobra runs one command
+// at a time). Tests that call cliSessionName should use resetCliStoreCache
+// in cleanup to prevent state leaking between tests.
 var cliStoreCache struct {
+	mu    sync.Mutex
 	path  string
 	store beads.Store
 }
@@ -163,11 +169,14 @@ var cliStoreCache struct {
 // agents don't open the store repeatedly. Silently falls back to legacy
 // naming if the store is unavailable.
 func cliSessionName(cityPath, cityName, agentName, sessionTemplate string) string {
+	cliStoreCache.mu.Lock()
 	if cliStoreCache.path != cityPath {
 		cliStoreCache.store, _ = openCityStoreAt(cityPath)
 		cliStoreCache.path = cityPath
 	}
-	return sessionName(cliStoreCache.store, cityName, agentName, sessionTemplate)
+	store := cliStoreCache.store
+	cliStoreCache.mu.Unlock()
+	return sessionName(store, cityName, agentName, sessionTemplate)
 }
 
 // findCity walks dir upward looking for a directory containing .gc/.
