@@ -211,9 +211,20 @@ func BuiltinProviders() map[string]ProviderSpec {
 			ProcessNames:     []string{"codex"},
 			InstructionsFile: "AGENTS.md",
 			PermissionModes: map[string]string{
+				"suggest":      "--ask-for-approval untrusted --sandbox read-only",
+				"auto-edit":    "--full-auto",
 				"unrestricted": "--dangerously-bypass-approvals-and-sandbox",
 			},
 			OptionsSchema: []ProviderOption{
+				{
+					Key: "permission_mode", Label: "Approval Policy", Type: "select",
+					Default: "unrestricted",
+					Choices: []OptionChoice{
+						{Value: "suggest", Label: "Suggest (ask for approval)", FlagArgs: []string{"--ask-for-approval", "untrusted", "--sandbox", "read-only"}},
+						{Value: "auto-edit", Label: "Full auto (sandboxed)", FlagArgs: []string{"--full-auto"}},
+						{Value: "unrestricted", Label: "Bypass all (no sandbox)", FlagArgs: []string{"--dangerously-bypass-approvals-and-sandbox"}},
+					},
+				},
 				{
 					Key: "model", Label: "Model", Type: "select",
 					Default: "",
@@ -235,9 +246,22 @@ func BuiltinProviders() map[string]ProviderSpec {
 			SupportsHooks:    true,
 			InstructionsFile: "AGENTS.md",
 			PermissionModes: map[string]string{
+				"default":      "--approval-mode default",
+				"auto-edit":    "--approval-mode auto_edit",
+				"plan":         "--approval-mode plan",
 				"unrestricted": "--approval-mode yolo",
 			},
 			OptionsSchema: []ProviderOption{
+				{
+					Key: "permission_mode", Label: "Approval Mode", Type: "select",
+					Default: "unrestricted",
+					Choices: []OptionChoice{
+						{Value: "default", Label: "Ask before actions", FlagArgs: []string{"--approval-mode", "default"}},
+						{Value: "auto-edit", Label: "Auto-approve edits", FlagArgs: []string{"--approval-mode", "auto_edit"}},
+						{Value: "plan", Label: "Read-only (plan)", FlagArgs: []string{"--approval-mode", "plan"}},
+						{Value: "unrestricted", Label: "YOLO (approve all)", FlagArgs: []string{"--approval-mode", "yolo"}},
+					},
+				},
 				{
 					Key: "model", Label: "Model", Type: "select",
 					Default: "",
