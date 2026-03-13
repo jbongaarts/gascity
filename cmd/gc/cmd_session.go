@@ -878,7 +878,7 @@ corresponding tmux session. Multi-word messages are joined automatically.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&delivery, "delivery", string(nudgeDeliveryImmediate), "delivery mode: immediate, wait-idle, or queue")
+	cmd.Flags().StringVar(&delivery, "delivery", string(nudgeDeliveryWaitIdle), "delivery mode: immediate, wait-idle, or queue")
 	return cmd
 }
 
