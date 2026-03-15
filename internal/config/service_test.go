@@ -50,6 +50,43 @@ contract = "` + builtinHealthzContract + `"
 	}
 }
 
+func TestParseServicePublicationConfig(t *testing.T) {
+	cfg, err := Parse([]byte(`
+[workspace]
+name = "test-city"
+
+[[service]]
+name = "review-intake"
+
+[service.publication]
+visibility = "public"
+hostname = "review"
+allow_websockets = true
+
+[service.workflow]
+contract = "` + builtinHealthzContract + `"
+`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(cfg.Services) != 1 {
+		t.Fatalf("len(Services) = %d, want 1", len(cfg.Services))
+	}
+	svc := cfg.Services[0]
+	if got := svc.PublicationVisibilityOrDefault(); got != "public" {
+		t.Fatalf("PublicationVisibilityOrDefault() = %q, want public", got)
+	}
+	if got := svc.PublicationHostnameOrDefault(); got != "review" {
+		t.Fatalf("PublicationHostnameOrDefault() = %q, want review", got)
+	}
+	if !svc.Publication.AllowWebSockets {
+		t.Fatal("Publication.AllowWebSockets = false, want true")
+	}
+	if err := ValidateServices(cfg.Services); err != nil {
+		t.Fatalf("ValidateServices: %v", err)
+	}
+}
+
 func TestValidateServicesWorkflowRequiresContract(t *testing.T) {
 	err := ValidateServices([]Service{{Name: "review-intake"}})
 	if err == nil {
@@ -96,6 +133,39 @@ func TestValidateServicesProxyProcessAcceptsCommand(t *testing.T) {
 	}})
 	if err != nil {
 		t.Fatalf("ValidateServices: %v", err)
+	}
+}
+
+func TestValidateServicesRejectsInvalidPublicationVisibility(t *testing.T) {
+	err := ValidateServices([]Service{{
+		Name: "review-intake",
+		Publication: ServicePublicationConfig{
+			Visibility: "internet",
+		},
+		Workflow: ServiceWorkflowConfig{Contract: builtinHealthzContract},
+	}})
+	if err == nil {
+		t.Fatal("expected error for invalid publication.visibility")
+	}
+	if !strings.Contains(err.Error(), `publication.visibility must be "private", "public", or "tenant"`) {
+		t.Fatalf("error = %v, want invalid publication visibility", err)
+	}
+}
+
+func TestValidateServicesRejectsInvalidPublicationHostname(t *testing.T) {
+	err := ValidateServices([]Service{{
+		Name: "review-intake",
+		Publication: ServicePublicationConfig{
+			Visibility: "public",
+			Hostname:   "bad.host",
+		},
+		Workflow: ServiceWorkflowConfig{Contract: builtinHealthzContract},
+	}})
+	if err == nil {
+		t.Fatal("expected error for invalid publication.hostname")
+	}
+	if !strings.Contains(err.Error(), "publication.hostname must be a single DNS label") {
+		t.Fatalf("error = %v, want invalid publication hostname", err)
 	}
 }
 

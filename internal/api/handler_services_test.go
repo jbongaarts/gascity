@@ -129,6 +129,39 @@ func TestServiceProxyDirectAllowsExternalMutationWithoutCSRF(t *testing.T) {
 	}
 }
 
+func TestServiceProxyPublishedAllowsExternalMutationWithoutCSRF(t *testing.T) {
+	state := newFakeState(t)
+	state.services = &fakeServiceRegistry{
+		items: []workspacesvc.Status{{
+			ServiceName:      "review-intake",
+			Visibility:       "public",
+			PublicURL:        "https://review-intake--demo-app--acme--abcd1234.apps.example.com",
+			PublicationState: "published",
+		}},
+		serve: func(w http.ResponseWriter, r *http.Request) bool {
+			if r.URL.Path != "/svc/review-intake/hooks/github" {
+				t.Errorf("path = %q, want /svc/review-intake/hooks/github", r.URL.Path)
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write([]byte("proxied"))
+			return true
+		},
+	}
+	srv := NewReadOnly(state)
+
+	req := httptest.NewRequest(http.MethodPost, "/svc/review-intake/hooks/github", strings.NewReader(`{}`))
+	req.RemoteAddr = "198.51.100.10:9000"
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+	if strings.TrimSpace(rec.Body.String()) != "proxied" {
+		t.Errorf("body = %q, want proxied", rec.Body.String())
+	}
+}
+
 func TestServiceProxyReadOnlyBlocksPrivateMutation(t *testing.T) {
 	state := newFakeState(t)
 	state.services = &fakeServiceRegistry{

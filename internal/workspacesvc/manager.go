@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/supervisor"
 )
 
 // Manager owns the lifecycle and status projection for workspace services.
@@ -70,7 +71,7 @@ func (m *Manager) Reload() error {
 	now := time.Now().UTC()
 
 	for _, svc := range cfg.Services {
-		base := baseStatus(m.rt.Config(), svc, now)
+		base := baseStatus(m.rt.Config(), m.rt.PublicationConfig(), svc, now)
 		stateRoot, err := ensureStateRoot(m.rt.CityPath(), svc)
 		base.StateRoot = stateRoot
 		if err != nil {
@@ -166,7 +167,7 @@ func (m *Manager) Tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		e.inst.Tick(ctx, now)
-		status := mergeStatus(baseStatus(m.rt.Config(), e.spec, now), e.inst.Status())
+		status := mergeStatus(baseStatus(m.rt.Config(), m.rt.PublicationConfig(), e.spec, now), e.inst.Status())
 		m.mu.Lock()
 		if cur, ok := m.entries[e.spec.Name]; ok {
 			cur.status = status
@@ -317,30 +318,59 @@ func serviceSubpath(path, name string) (string, bool) {
 	}
 }
 
-func baseStatus(cfg *config.City, svc config.Service, now time.Time) Status {
+func baseStatus(cfg *config.City, pubCfg supervisor.PublicationConfig, svc config.Service, now time.Time) Status {
+	visibility := svc.PublicationVisibilityOrDefault()
 	status := Status{
 		ServiceName:      svc.Name,
 		Kind:             svc.KindOrDefault(),
 		WorkflowContract: svc.Workflow.Contract,
 		MountPath:        svc.MountPathOrDefault(),
 		PublishMode:      svc.PublishModeOrDefault(),
+		Visibility:       visibility,
+		Hostname:         svc.PublicationHostnameOrDefault(),
 		StateRoot:        svc.StateRootOrDefault(),
 		ServiceState:     "ready",
+		State:            "ready",
 		LocalState:       "ready",
 		PublicationState: "private",
 		UpdatedAt:        now,
+		AllowWebSockets:  svc.Publication.AllowWebSockets,
 	}
 
-	switch status.PublishMode {
+	switch visibility {
 	case "private":
 		status.PublicationState = "private"
-	case "direct":
-		if baseURL := directBaseURL(cfg); baseURL != "" {
-			status.PublicURL = strings.TrimRight(baseURL, "/") + status.MountPath
-			status.PublicationState = "direct"
-		} else {
+	default:
+		publishedURL, publicationReason := derivePublishedURL(pubCfg, workspaceName(cfg), svc)
+		if publishedURL != "" {
+			status.PublicURL = publishedURL
+			status.URL = publishedURL
+			status.PublicationState = "published"
+			status.StateReason = publicationReason
+			status.Reason = publicationReason
+			break
+		}
+		if status.PublishMode == "direct" {
+			if baseURL := directBaseURL(cfg); baseURL != "" {
+				status.PublicURL = strings.TrimRight(baseURL, "/") + status.MountPath
+				status.URL = status.PublicURL
+				status.PublicationState = "direct"
+				status.StateReason = "route_active"
+				status.Reason = "route_active"
+				break
+			}
 			status.PublicationState = "blocked"
 			status.StateReason = "direct_base_url_unavailable"
+			status.Reason = status.StateReason
+			break
+		}
+		status.PublicationState = "blocked"
+		if publicationReason != "" {
+			status.StateReason = publicationReason
+			status.Reason = publicationReason
+		} else {
+			status.StateReason = "publication_unavailable"
+			status.Reason = status.StateReason
 		}
 	}
 
@@ -363,14 +393,35 @@ func mergeStatus(base, override Status) Status {
 	if override.PublishMode != "" {
 		base.PublishMode = override.PublishMode
 	}
+	if override.Visibility != "" {
+		base.Visibility = override.Visibility
+	}
+	if override.Hostname != "" {
+		base.Hostname = override.Hostname
+	}
 	if override.StateRoot != "" {
 		base.StateRoot = override.StateRoot
 	}
 	if override.PublicURL != "" {
 		base.PublicURL = override.PublicURL
+		if base.URL == "" {
+			base.URL = override.PublicURL
+		}
+	}
+	if override.URL != "" {
+		base.URL = override.URL
+		if base.PublicURL == "" {
+			base.PublicURL = override.URL
+		}
 	}
 	if override.ServiceState != "" {
 		base.ServiceState = override.ServiceState
+		if base.State == "" {
+			base.State = override.ServiceState
+		}
+	}
+	if override.State != "" {
+		base.State = override.State
 	}
 	if override.LocalState != "" {
 		base.LocalState = override.LocalState
@@ -380,7 +431,14 @@ func mergeStatus(base, override Status) Status {
 	}
 	if override.StateReason != "" {
 		base.StateReason = override.StateReason
+		if base.Reason == "" {
+			base.Reason = override.StateReason
+		}
 	}
+	if override.Reason != "" {
+		base.Reason = override.Reason
+	}
+	base.AllowWebSockets = base.AllowWebSockets || override.AllowWebSockets
 	if !override.UpdatedAt.IsZero() {
 		base.UpdatedAt = override.UpdatedAt
 	}
@@ -423,4 +481,14 @@ func directBaseURL(cfg *config.City) string {
 		return ""
 	}
 	return "http://" + net.JoinHostPort(bind, strconv.Itoa(cfg.API.Port))
+}
+
+func workspaceName(cfg *config.City) string {
+	if cfg == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(cfg.Workspace.Name); v != "" {
+		return v
+	}
+	return ""
 }

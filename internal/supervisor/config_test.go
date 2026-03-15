@@ -32,6 +32,14 @@ func TestLoadConfigExplicit(t *testing.T) {
 port = 9090
 bind = "0.0.0.0"
 patrol_interval = "5s"
+
+[publication]
+provider = "hosted"
+tenant_slug = "acme"
+public_base_domain = "apps.example.com"
+
+[publication.tenant_auth]
+policy_ref = "platform-sso"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +56,18 @@ patrol_interval = "5s"
 	}
 	if cfg.Supervisor.PatrolIntervalDuration() != 5*time.Second {
 		t.Errorf("expected patrol 5s, got %v", cfg.Supervisor.PatrolIntervalDuration())
+	}
+	if cfg.Publication.ProviderOrDefault() != "hosted" {
+		t.Errorf("Publication.ProviderOrDefault() = %q, want hosted", cfg.Publication.ProviderOrDefault())
+	}
+	if cfg.Publication.TenantSlugOrDefault() != "acme" {
+		t.Errorf("Publication.TenantSlugOrDefault() = %q, want acme", cfg.Publication.TenantSlugOrDefault())
+	}
+	if cfg.Publication.BaseDomainForVisibility("public") != "apps.example.com" {
+		t.Errorf("Publication.BaseDomainForVisibility(public) = %q, want apps.example.com", cfg.Publication.BaseDomainForVisibility("public"))
+	}
+	if cfg.Publication.TenantAuth.PolicyRef != "platform-sso" {
+		t.Errorf("Publication.TenantAuth.PolicyRef = %q, want platform-sso", cfg.Publication.TenantAuth.PolicyRef)
 	}
 }
 
@@ -71,5 +91,12 @@ func TestRuntimeDirFallback(t *testing.T) {
 	expected := DefaultHome()
 	if got != expected {
 		t.Errorf("expected %s, got %s", expected, got)
+	}
+}
+
+func TestPublicationsPath(t *testing.T) {
+	t.Setenv("GC_HOME", "/custom/gc")
+	if got := PublicationsPath(); got != "/custom/gc/supervisor/publications.json" {
+		t.Errorf("PublicationsPath() = %q, want /custom/gc/supervisor/publications.json", got)
 	}
 }

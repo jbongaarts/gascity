@@ -4,6 +4,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/supervisor"
 	"github.com/gastownhall/gascity/internal/workspacesvc"
 )
 
@@ -25,6 +26,12 @@ func (rt *serviceRuntime) Config() *config.City {
 	rt.cr.serviceStateMu.RLock()
 	defer rt.cr.serviceStateMu.RUnlock()
 	return rt.cr.cfg
+}
+
+func (rt *serviceRuntime) PublicationConfig() supervisor.PublicationConfig {
+	rt.cr.serviceStateMu.RLock()
+	defer rt.cr.serviceStateMu.RUnlock()
+	return rt.cr.publication
 }
 
 func (rt *serviceRuntime) SessionProvider() runtime.Provider {

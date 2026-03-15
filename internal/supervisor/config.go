@@ -3,6 +3,7 @@ package supervisor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -11,7 +12,8 @@ import (
 // Config holds machine-wide supervisor configuration loaded from
 // ~/.gc/supervisor.toml (or $GC_HOME/supervisor.toml).
 type Config struct {
-	Supervisor Section `toml:"supervisor"`
+	Supervisor  Section           `toml:"supervisor"`
+	Publication PublicationConfig `toml:"publication,omitempty"`
 }
 
 // Section holds the [supervisor] table fields.
@@ -20,6 +22,21 @@ type Section struct {
 	Bind           string `toml:"bind,omitempty"`
 	PatrolInterval string `toml:"patrol_interval,omitempty"`
 	AllowMutations bool   `toml:"allow_mutations,omitempty"`
+}
+
+// PublicationConfig holds machine-wide publication policy for workspace
+// services. Hosted publication is the only supported provider in v0.
+type PublicationConfig struct {
+	Provider         string                      `toml:"provider,omitempty"`
+	TenantSlug       string                      `toml:"tenant_slug,omitempty"`
+	PublicBaseDomain string                      `toml:"public_base_domain,omitempty"`
+	TenantBaseDomain string                      `toml:"tenant_base_domain,omitempty"`
+	TenantAuth       PublicationTenantAuthConfig `toml:"tenant_auth,omitempty"`
+}
+
+// PublicationTenantAuthConfig configures tenant-route auth policy.
+type PublicationTenantAuthConfig struct {
+	PolicyRef string `toml:"policy_ref,omitempty"`
 }
 
 // BindOrDefault returns the bind address, defaulting to "127.0.0.1".
@@ -49,6 +66,40 @@ func (s Section) PatrolIntervalDuration() time.Duration {
 		return 10 * time.Second
 	}
 	return d
+}
+
+// ProviderOrDefault returns the normalized publication provider.
+func (p PublicationConfig) ProviderOrDefault() string {
+	return strings.ToLower(strings.TrimSpace(p.Provider))
+}
+
+// Enabled reports whether machine publication is configured.
+func (p PublicationConfig) Enabled() bool {
+	return p.ProviderOrDefault() != ""
+}
+
+// BaseDomainForVisibility returns the base domain for a publication visibility.
+func (p PublicationConfig) BaseDomainForVisibility(visibility string) string {
+	switch strings.ToLower(strings.TrimSpace(visibility)) {
+	case "public":
+		return normalizePublicationDomain(p.PublicBaseDomain)
+	case "tenant":
+		return normalizePublicationDomain(p.TenantBaseDomain)
+	default:
+		return ""
+	}
+}
+
+// TenantSlugOrDefault returns the normalized tenant slug.
+func (p PublicationConfig) TenantSlugOrDefault() string {
+	return normalizePublicationDomain(p.TenantSlug)
+}
+
+func normalizePublicationDomain(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	value = strings.TrimPrefix(value, ".")
+	value = strings.TrimSuffix(value, ".")
+	return value
 }
 
 // LoadConfig loads supervisor config from the given path. Returns a
@@ -99,4 +150,9 @@ func RegistryPath() string {
 // ConfigPath returns the path to the supervisor.toml config file.
 func ConfigPath() string {
 	return filepath.Join(DefaultHome(), "supervisor.toml")
+}
+
+// PublicationsPath returns the authoritative publication store path.
+func PublicationsPath() string {
+	return filepath.Join(DefaultHome(), "supervisor", "publications.json")
 }

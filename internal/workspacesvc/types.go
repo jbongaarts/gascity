@@ -9,6 +9,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/supervisor"
 )
 
 // Status is the API-facing state projection for one workspace service.
@@ -18,12 +19,18 @@ type Status struct {
 	WorkflowContract string    `json:"workflow_contract,omitempty"`
 	MountPath        string    `json:"mount_path"`
 	PublishMode      string    `json:"publish_mode"`
+	Visibility       string    `json:"visibility,omitempty"`
+	Hostname         string    `json:"hostname,omitempty"`
 	StateRoot        string    `json:"state_root"`
 	PublicURL        string    `json:"public_url,omitempty"`
+	URL              string    `json:"url,omitempty"`
 	ServiceState     string    `json:"service_state"`
+	State            string    `json:"state,omitempty"`
 	LocalState       string    `json:"local_state"`
 	PublicationState string    `json:"publication_state"`
 	StateReason      string    `json:"state_reason,omitempty"`
+	Reason           string    `json:"reason,omitempty"`
+	AllowWebSockets  bool      `json:"allow_websockets,omitempty"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
@@ -32,6 +39,7 @@ type RuntimeContext interface {
 	CityPath() string
 	CityName() string
 	Config() *config.City
+	PublicationConfig() supervisor.PublicationConfig
 	SessionProvider() runtime.Provider
 	BeadStore(rig string) beads.Store
 	Poke()

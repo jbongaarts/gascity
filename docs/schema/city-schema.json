@@ -1450,6 +1450,10 @@
           "type": "string",
           "description": "StateRoot overrides the managed service state root. Defaults to\n.gc/services/{name}. The path must stay within .gc/services/."
         },
+        "publication": {
+          "$ref": "#/$defs/ServicePublicationConfig",
+          "description": "Publication declares generic publication intent. The platform decides\nwhether and how that intent becomes a public route."
+        },
         "workflow": {
           "$ref": "#/$defs/ServiceWorkflowConfig",
           "description": "Workflow configures controller-owned workflow services."
@@ -1483,6 +1487,30 @@
       "additionalProperties": false,
       "type": "object",
       "description": "ServiceProcessConfig configures a controller-supervised local process that is reverse-proxied under /svc/{name}."
+    },
+    "ServicePublicationConfig": {
+      "properties": {
+        "visibility": {
+          "type": "string",
+          "enum": [
+            "private",
+            "public",
+            "tenant"
+          ],
+          "description": "Visibility selects whether the service is private to the workspace,\navailable publicly, or gated by tenant auth at the platform edge."
+        },
+        "hostname": {
+          "type": "string",
+          "description": "Hostname overrides the default hostname label derived from service.name."
+        },
+        "allow_websockets": {
+          "type": "boolean",
+          "description": "AllowWebSockets permits websocket upgrades on the published route."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "ServicePublicationConfig declares platform-neutral publication intent."
     },
     "ServiceWorkflowConfig": {
       "properties": {

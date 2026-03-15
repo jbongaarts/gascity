@@ -562,7 +562,7 @@ func doSlingBatch(opts slingOpts, deps slingDeps, querier BeadChildQuerier) int 
 				failed++
 				continue
 			}
-			_ = deps.Store.SetMetadata(child.ID, "molecule_id", wispRootID) // best-effort
+			_ = deps.Store.SetMetadata(child.ID, "molecule_id", wispRootID)             // best-effort
 			fmt.Fprintf(deps.Stdout, "  Attached wisp %s → %s\n", wispRootID, child.ID) //nolint:errcheck // best-effort
 		} else if !opts.NoFormula && a.DefaultSlingFormula != "" {
 			// Apply default formula per-child.
@@ -573,7 +573,7 @@ func doSlingBatch(opts slingOpts, deps slingDeps, querier BeadChildQuerier) int 
 				failed++
 				continue
 			}
-			_ = deps.Store.SetMetadata(child.ID, "molecule_id", wispRootID) // best-effort
+			_ = deps.Store.SetMetadata(child.ID, "molecule_id", wispRootID)                               // best-effort
 			fmt.Fprintf(deps.Stdout, "  Attached wisp %s (default formula) → %s\n", wispRootID, child.ID) //nolint:errcheck // best-effort
 		}
 

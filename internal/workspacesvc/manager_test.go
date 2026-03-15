@@ -16,6 +16,7 @@ import (
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/supervisor"
 )
 
 type testRuntime struct {
@@ -24,11 +25,15 @@ type testRuntime struct {
 	cfg      *config.City
 	sp       runtime.Provider
 	store    beads.Store
+	pubCfg   supervisor.PublicationConfig
 }
 
-func (t *testRuntime) CityPath() string                  { return t.cityPath }
-func (t *testRuntime) CityName() string                  { return t.cityName }
-func (t *testRuntime) Config() *config.City              { return t.cfg }
+func (t *testRuntime) CityPath() string     { return t.cityPath }
+func (t *testRuntime) CityName() string     { return t.cityName }
+func (t *testRuntime) Config() *config.City { return t.cfg }
+func (t *testRuntime) PublicationConfig() supervisor.PublicationConfig {
+	return t.pubCfg
+}
 func (t *testRuntime) SessionProvider() runtime.Provider { return t.sp }
 func (t *testRuntime) BeadStore(string) beads.Store      { return t.store }
 func (t *testRuntime) Poke()                             {}
@@ -126,6 +131,114 @@ func TestManagerReloadWorkflowServiceCreatesStateRootAndDirectURL(t *testing.T) 
 		if _, err := os.Stat(want); err != nil {
 			t.Fatalf("expected %s to exist: %v", want, err)
 		}
+	}
+}
+
+func TestManagerReloadWorkflowServicePublishesWithSupervisorConfig(t *testing.T) {
+	contract := uniqueContract(t)
+	registerWorkflowContractForTest(t, contract, func(_ RuntimeContext, svc config.Service) (Instance, error) {
+		return &testInstance{
+			status: Status{
+				ServiceName:      svc.Name,
+				WorkflowContract: contract,
+				ServiceState:     "ready",
+				LocalState:       "ready",
+			},
+		}, nil
+	})
+
+	rt := &testRuntime{
+		cityPath: t.TempDir(),
+		cityName: "test-city",
+		cfg: &config.City{
+			Workspace: config.Workspace{Name: "demo-app"},
+			Services: []config.Service{{
+				Name: "review-intake",
+				Publication: config.ServicePublicationConfig{
+					Visibility: "public",
+				},
+				Workflow: config.ServiceWorkflowConfig{Contract: contract},
+			}},
+		},
+		pubCfg: supervisor.PublicationConfig{
+			Provider:         "hosted",
+			TenantSlug:       "acme",
+			PublicBaseDomain: "apps.example.com",
+		},
+		sp:    runtime.NewFake(),
+		store: beads.NewMemStore(),
+	}
+
+	mgr := NewManager(rt)
+	if err := mgr.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	status, ok := mgr.Get("review-intake")
+	if !ok {
+		t.Fatal("service status missing")
+	}
+	if !strings.HasPrefix(status.PublicURL, "https://review-intake--demo-app--acme--") {
+		t.Fatalf("PublicURL = %q, want review-intake--demo-app--acme prefix", status.PublicURL)
+	}
+	if status.PublicationState != "published" {
+		t.Errorf("PublicationState = %q, want published", status.PublicationState)
+	}
+	if status.Visibility != "public" {
+		t.Errorf("Visibility = %q, want public", status.Visibility)
+	}
+	if status.Reason != "route_active" {
+		t.Errorf("Reason = %q, want route_active", status.Reason)
+	}
+}
+
+func TestManagerReloadWorkflowServiceBlocksPublicationWithoutSupervisor(t *testing.T) {
+	contract := uniqueContract(t)
+	registerWorkflowContractForTest(t, contract, func(_ RuntimeContext, svc config.Service) (Instance, error) {
+		return &testInstance{
+			status: Status{
+				ServiceName:      svc.Name,
+				WorkflowContract: contract,
+				ServiceState:     "ready",
+				LocalState:       "ready",
+			},
+		}, nil
+	})
+
+	rt := &testRuntime{
+		cityPath: t.TempDir(),
+		cityName: "test-city",
+		cfg: &config.City{
+			Workspace: config.Workspace{Name: "demo-app"},
+			Services: []config.Service{{
+				Name: "review-intake",
+				Publication: config.ServicePublicationConfig{
+					Visibility: "public",
+				},
+				Workflow: config.ServiceWorkflowConfig{Contract: contract},
+			}},
+		},
+		sp:    runtime.NewFake(),
+		store: beads.NewMemStore(),
+	}
+
+	mgr := NewManager(rt)
+	if err := mgr.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+
+	status, ok := mgr.Get("review-intake")
+	if !ok {
+		t.Fatal("service status missing")
+	}
+	if status.PublicURL != "" {
+		t.Fatalf("PublicURL = %q, want empty", status.PublicURL)
+	}
+	if status.PublicationState != "blocked" {
+		t.Errorf("PublicationState = %q, want blocked", status.PublicationState)
+	}
+	if status.Reason != "publication_requires_supervisor" {
+		t.Errorf("Reason = %q, want publication_requires_supervisor", status.Reason)
 	}
 }
 

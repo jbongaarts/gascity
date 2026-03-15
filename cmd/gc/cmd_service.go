@@ -157,6 +157,7 @@ func doServiceDoctor(cfg *config.City, reader serviceStatusReader, name string, 
 		fmt.Fprintf(stdout, "Command:           %s\n", strings.Join(svc.Process.Command, " ")) //nolint:errcheck
 	}
 	fmt.Fprintf(stdout, "Mount Path:        %s\n", status.MountPath)              //nolint:errcheck
+	fmt.Fprintf(stdout, "Visibility:        %s\n", serviceVisibility(status))     //nolint:errcheck
 	fmt.Fprintf(stdout, "Publish Mode:      %s\n", status.PublishMode)            //nolint:errcheck
 	fmt.Fprintf(stdout, "Service State:     %s\n", status.ServiceState)           //nolint:errcheck
 	fmt.Fprintf(stdout, "Local State:       %s\n", status.LocalState)             //nolint:errcheck
@@ -193,10 +194,14 @@ func configServiceStatus(svc config.Service) workspacesvc.Status {
 		WorkflowContract: svc.Workflow.Contract,
 		MountPath:        svc.MountPathOrDefault(),
 		PublishMode:      svc.PublishModeOrDefault(),
+		Visibility:       svc.PublicationVisibilityOrDefault(),
+		Hostname:         svc.PublicationHostnameOrDefault(),
 		StateRoot:        svc.StateRootOrDefault(),
 		ServiceState:     "config",
+		State:            "config",
 		LocalState:       "config",
-		PublicationState: svc.PublishModeOrDefault(),
+		PublicationState: svc.PublicationVisibilityOrDefault(),
+		AllowWebSockets:  svc.Publication.AllowWebSockets,
 	}
 }
 
@@ -225,10 +230,20 @@ func serviceReadClient(cityPath string, cfg *config.City) serviceStatusReader {
 }
 
 func publicationState(status workspacesvc.Status) string {
-	if status.PublicationState == "" {
-		return status.PublishMode
+	if status.PublicationState != "" {
+		return status.PublicationState
 	}
-	return status.PublicationState
+	if status.Visibility != "" {
+		return status.Visibility
+	}
+	return status.PublishMode
+}
+
+func serviceVisibility(status workspacesvc.Status) string {
+	if strings.TrimSpace(status.Visibility) == "" {
+		return "private"
+	}
+	return status.Visibility
 }
 
 func emptyDash(v string) string {

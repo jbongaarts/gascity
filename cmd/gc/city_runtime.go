@@ -16,6 +16,7 @@ import (
 	"github.com/gastownhall/gascity/internal/convergence"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/supervisor"
 	"github.com/gastownhall/gascity/internal/telemetry"
 	"github.com/gastownhall/gascity/internal/workspacesvc"
 )
@@ -33,6 +34,7 @@ type CityRuntime struct {
 	serviceStateMu sync.RWMutex
 	cfg            *config.City
 	sp             runtime.Provider
+	publication    supervisor.PublicationConfig
 	buildFn        func(*config.City, runtime.Provider, beads.Store) map[string]TemplateParams
 
 	rops reconcileOps
@@ -74,10 +76,11 @@ type CityRuntimeParams struct {
 	TomlPath  string
 	WatchDirs []string
 
-	Cfg     *config.City
-	SP      runtime.Provider
-	BuildFn func(*config.City, runtime.Provider, beads.Store) map[string]TemplateParams
-	Dops    drainOps
+	Cfg         *config.City
+	SP          runtime.Provider
+	Publication supervisor.PublicationConfig
+	BuildFn     func(*config.City, runtime.Provider, beads.Store) map[string]TemplateParams
+	Dops        drainOps
 
 	Rec events.Recorder
 
@@ -126,6 +129,7 @@ func newCityRuntime(p CityRuntimeParams) *CityRuntime {
 		watchDirs:         p.WatchDirs,
 		cfg:               p.Cfg,
 		sp:                p.SP,
+		publication:       p.Publication,
 		buildFn:           p.BuildFn,
 		rops:              rops,
 		dops:              p.Dops,

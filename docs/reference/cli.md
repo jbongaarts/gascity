@@ -46,6 +46,7 @@ gc [flags]
 | [gc resume](#gc-resume) | Resume a suspended city |
 | [gc rig](#gc-rig) | Manage rigs (projects) |
 | [gc runtime](#gc-runtime) | Process-intrinsic runtime operations |
+| [gc service](#gc-service) | Inspect workspace services |
 | [gc session](#gc-session) | Manage interactive chat sessions |
 | [gc skill](#gc-skill) | Show command reference for a topic |
 | [gc sling](#gc-sling) | Route work to an agent or pool |
@@ -1495,6 +1496,35 @@ agent to continue normal operation.
 
 ```
 gc runtime undrain <name>
+```
+
+## gc service
+
+Inspect workspace services
+
+```
+gc service
+```
+
+| Subcommand | Description |
+|------------|-------------|
+| [gc service doctor](#gc-service-doctor) | Show detailed workspace service status |
+| [gc service list](#gc-service-list) | List workspace services |
+
+## gc service doctor
+
+Show detailed workspace service status
+
+```
+gc service doctor <name>
+```
+
+## gc service list
+
+List workspace services
+
+```
+gc service list
 ```
 
 ## gc session

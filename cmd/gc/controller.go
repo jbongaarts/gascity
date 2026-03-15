@@ -26,6 +26,7 @@ import (
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/runtime"
+	"github.com/gastownhall/gascity/internal/supervisor"
 	"github.com/gastownhall/gascity/internal/telemetry"
 	"github.com/gastownhall/gascity/internal/workspacesvc"
 )
@@ -540,6 +541,7 @@ func runController(
 		WatchDirs:         initialWatchDirs,
 		Cfg:               cfg,
 		SP:                sp,
+		Publication:       supervisor.PublicationConfig{},
 		BuildFn:           buildFn,
 		Dops:              dops,
 		Rec:               rec,

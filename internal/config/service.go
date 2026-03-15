@@ -9,7 +9,10 @@ import (
 	"github.com/gastownhall/gascity/internal/citylayout"
 )
 
-var validServiceName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+var (
+	validServiceName      = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+	validPublicationLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+)
 
 // Service declares a workspace-owned HTTP service mounted under /svc/{name}.
 type Service struct {
@@ -23,12 +26,26 @@ type Service struct {
 	// StateRoot overrides the managed service state root. Defaults to
 	// .gc/services/{name}. The path must stay within .gc/services/.
 	StateRoot string `toml:"state_root,omitempty"`
+	// Publication declares generic publication intent. The platform decides
+	// whether and how that intent becomes a public route.
+	Publication ServicePublicationConfig `toml:"publication,omitempty"`
 	// Workflow configures controller-owned workflow services.
 	Workflow ServiceWorkflowConfig `toml:"workflow,omitempty"`
 	// Process configures controller-supervised proxy services.
 	Process ServiceProcessConfig `toml:"process,omitempty"`
 	// SourceDir records pack provenance for pack-stamped services.
 	SourceDir string `toml:"-" json:"-"`
+}
+
+// ServicePublicationConfig declares platform-neutral publication intent.
+type ServicePublicationConfig struct {
+	// Visibility selects whether the service is private to the workspace,
+	// available publicly, or gated by tenant auth at the platform edge.
+	Visibility string `toml:"visibility,omitempty" jsonschema:"enum=private,enum=public,enum=tenant"`
+	// Hostname overrides the default hostname label derived from service.name.
+	Hostname string `toml:"hostname,omitempty"`
+	// AllowWebSockets permits websocket upgrades on the published route.
+	AllowWebSockets bool `toml:"allow_websockets,omitempty"`
 }
 
 // KindOrDefault returns the normalized service kind.
@@ -52,12 +69,71 @@ func (s Service) PublishModeOrDefault() string {
 	return s.PublishMode
 }
 
+// PublicationVisibilityOrDefault returns the normalized publication visibility.
+func (s Service) PublicationVisibilityOrDefault() string {
+	if v := strings.TrimSpace(strings.ToLower(s.Publication.Visibility)); v != "" {
+		return v
+	}
+	if s.PublishModeOrDefault() == "direct" {
+		return "public"
+	}
+	return "private"
+}
+
+// PublicationHostnameOrDefault returns the hostname label used for published
+// service URLs.
+func (s Service) PublicationHostnameOrDefault() string {
+	if v := strings.TrimSpace(strings.ToLower(s.Publication.Hostname)); v != "" {
+		return v
+	}
+	return normalizePublicationLabel(s.Name, "service")
+}
+
 // StateRootOrDefault returns the managed runtime root for the service.
 func (s Service) StateRootOrDefault() string {
 	if s.StateRoot != "" {
 		return filepath.Clean(s.StateRoot)
 	}
 	return filepath.Join(citylayout.RuntimeServicesRoot, s.Name)
+}
+
+func normalizePublicationLabel(value, fallback string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	var b strings.Builder
+	prevDash := false
+	for _, ch := range value {
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= '0' && ch <= '9':
+			b.WriteRune(ch)
+			prevDash = false
+		case ch == '-' || ch == '_':
+			if b.Len() == 0 || prevDash {
+				continue
+			}
+			b.WriteByte('-')
+			prevDash = true
+		default:
+			if b.Len() == 0 || prevDash {
+				continue
+			}
+			b.WriteByte('-')
+			prevDash = true
+		}
+		if b.Len() >= 63 {
+			break
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return fallback
+	}
+	if len(out) > 63 {
+		out = strings.Trim(out[:63], "-")
+	}
+	if out == "" {
+		return fallback
+	}
+	return out
 }
 
 // ServiceWorkflowConfig configures controller-owned workflow services.
@@ -104,6 +180,17 @@ func ValidateServices(services []Service) error {
 		case "private", "direct":
 		default:
 			return fmt.Errorf("service %q: publish_mode must be \"private\" or \"direct\", got %q", svc.Name, svc.PublishMode)
+		}
+		switch svc.PublicationVisibilityOrDefault() {
+		case "private", "public", "tenant":
+		default:
+			return fmt.Errorf("service %q: publication.visibility must be \"private\", \"public\", or \"tenant\", got %q", svc.Name, svc.Publication.Visibility)
+		}
+		if svc.PublishMode == "direct" && svc.Publication.Visibility != "" && svc.PublicationVisibilityOrDefault() != "public" {
+			return fmt.Errorf("service %q: publish_mode=direct requires publication.visibility to be omitted or \"public\"", svc.Name)
+		}
+		if hostname := strings.TrimSpace(strings.ToLower(svc.Publication.Hostname)); hostname != "" && !validPublicationLabel.MatchString(hostname) {
+			return fmt.Errorf("service %q: publication.hostname must be a single DNS label, got %q", svc.Name, svc.Publication.Hostname)
 		}
 
 		root := filepath.ToSlash(filepath.Clean(svc.StateRootOrDefault()))

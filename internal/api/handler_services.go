@@ -65,14 +65,15 @@ func serviceRequestAllowed(w http.ResponseWriter, status workspacesvc.Status, r 
 	if status.PublishMode == "" {
 		status.PublishMode = "private"
 	}
+	published := serviceExternallyReachable(status)
 	// Read-only API mode still permits direct-published service mutations:
 	// service ingress uses a separate trust model from /v0/* and is how
 	// webhook-style services remain reachable on non-localhost binds.
-	if apiReadOnly && status.PublishMode != "direct" && isMutationMethod(r.Method) {
-		writeError(w, http.StatusForbidden, "read_only", "service mutations are disabled for non-direct services")
+	if apiReadOnly && !published && isMutationMethod(r.Method) {
+		writeError(w, http.StatusForbidden, "read_only", "service mutations are disabled for unpublished services")
 		return false
 	}
-	if status.PublishMode == "private" {
+	if !published {
 		if !isLoopbackRemoteAddr(r.RemoteAddr) {
 			writeError(w, http.StatusNotFound, "not_found", "service route not found")
 			return false
@@ -83,6 +84,21 @@ func serviceRequestAllowed(w http.ResponseWriter, status workspacesvc.Status, r 
 		}
 	}
 	return true
+}
+
+func serviceExternallyReachable(status workspacesvc.Status) bool {
+	if status.PublishMode == "direct" {
+		return true
+	}
+	if strings.TrimSpace(status.PublicURL) != "" || strings.TrimSpace(status.URL) != "" {
+		return true
+	}
+	switch status.PublicationState {
+	case "published", "direct":
+		return true
+	default:
+		return false
+	}
 }
 
 func isLoopbackRemoteAddr(remoteAddr string) bool {

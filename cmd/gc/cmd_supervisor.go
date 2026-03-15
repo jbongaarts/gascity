@@ -402,7 +402,7 @@ func runSupervisor(stdout, stderr io.Writer) int {
 				fmt.Fprintf(stderr, "gc supervisor: reconcile panicked: %v\n", r) //nolint:errcheck
 			}
 		}()
-		reconcileCities(reg, cities, &mu, panicHistory, initFailures, stdout, stderr)
+		reconcileCities(reg, cities, &mu, panicHistory, initFailures, supCfg.Publication, stdout, stderr)
 	}
 
 	// Initial reconcile.
@@ -480,6 +480,7 @@ func reconcileCities(
 	mu *sync.RWMutex,
 	panicHistory map[string]*panicRecord,
 	initFailures map[string]*initFailRecord,
+	publication supervisor.PublicationConfig,
 	stdout, stderr io.Writer,
 ) {
 	entries, err := reg.List()
@@ -734,6 +735,7 @@ func reconcileCities(
 			WatchDirs:         watchDirs,
 			Cfg:               cfg,
 			SP:                sp,
+			Publication:       publication,
 			BuildFn:           supervisorBuildAgentsFn(path, cityName, stderr),
 			Dops:              dops,
 			Rec:               rec,
