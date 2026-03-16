@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +78,49 @@ func TestSupervisorCitiesList(t *testing.T) {
 	// Sorted by name.
 	if resp.Items[0].Name != "alpha" || resp.Items[1].Name != "beta" {
 		t.Errorf("items = %v, want alpha then beta", resp.Items)
+	}
+}
+
+func TestSupervisorProviderReadinessRoute(t *testing.T) {
+	homeDir := t.TempDir()
+	binDir := filepath.Join(homeDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	writeExecutable(t, binDir, "codex", "#!/bin/sh\nexit 0\n")
+	if err := os.MkdirAll(filepath.Join(homeDir, ".codex"), 0o755); err != nil {
+		t.Fatalf("mkdir codex dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(homeDir, ".codex", "auth.json"),
+		[]byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"token"}}`),
+		0o600,
+	); err != nil {
+		t.Fatalf("write codex auth: %v", err)
+	}
+
+	t.Setenv("HOME", homeDir)
+	originalPathEnv := providerProbePathEnv
+	providerProbePathEnv = binDir
+	defer func() {
+		providerProbePathEnv = originalPathEnv
+	}()
+
+	sm := newTestSupervisorMux(t, map[string]*fakeState{})
+	req := httptest.NewRequest("GET", "/v0/provider-readiness?providers=codex", nil)
+	rec := httptest.NewRecorder()
+	sm.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp providerReadinessResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := resp.Providers["codex"].Status; got != probeStatusConfigured {
+		t.Errorf("codex status = %q, want %q", got, probeStatusConfigured)
 	}
 }
 

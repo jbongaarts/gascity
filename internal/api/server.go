@@ -139,6 +139,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 
 	// City
+	s.mux.HandleFunc("GET /v0/provider-readiness", handleProviderReadiness)
 	s.mux.HandleFunc("GET /v0/city", s.handleCityGet)
 	s.mux.HandleFunc("PATCH /v0/city", s.handleCityPatch)
 	s.mux.HandleFunc("POST /v0/city", handleCityCreate)
