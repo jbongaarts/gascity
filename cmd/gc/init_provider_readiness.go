@@ -475,6 +475,14 @@ func checkHardDependencies(cityPath string) []missingDep {
 			installHint: "brew install flock (macOS) or apt install util-linux (Linux)",
 			condition:   func() bool { return needsBd },
 		},
+		{
+			name:        "pgrep",
+			installHint: "brew install proctools (macOS) or apt install procps (Linux)",
+		},
+		{
+			name:        "lsof",
+			installHint: "brew install lsof (macOS) or apt install lsof (Linux)",
+		},
 	}
 
 	var missing []missingDep

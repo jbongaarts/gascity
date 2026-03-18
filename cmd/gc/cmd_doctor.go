@@ -97,13 +97,14 @@ func doDoctor(fix, verbose bool, stdout, stderr io.Writer) int {
 		d.Register(doctor.NewPackCacheCheck(cfg.Packs, cityPath))
 	}
 
-	// Infrastructure checks.
+	// Infrastructure checks — universal dependencies.
+	// dolt/bd/flock are checked by pack doctor scripts (check-bd.sh,
+	// check-dolt.sh) which also verify versions and service health.
 	d.Register(doctor.NewBinaryCheck("tmux", "", exec.LookPath))
 	d.Register(doctor.NewBinaryCheck("git", "", exec.LookPath))
-
-	// Beads provider dependencies (dolt, bd, flock) are checked by pack
-	// doctor scripts (check-bd.sh, check-dolt.sh) registered below, which
-	// also verify versions and service health.
+	d.Register(doctor.NewBinaryCheck("jq", "", exec.LookPath))
+	d.Register(doctor.NewBinaryCheck("pgrep", "", exec.LookPath))
+	d.Register(doctor.NewBinaryCheck("lsof", "", exec.LookPath))
 
 	// Controller check + session checks (gated by controller state).
 	controllerRunning := doctor.IsControllerRunning(cityPath)
