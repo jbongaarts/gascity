@@ -98,18 +98,31 @@ func RunStoreTests(t *testing.T, newStore func() beads.Store) {
 
 	t.Run("CreateAssigneeRoundTrips", func(t *testing.T) {
 		s := newStore()
-		created, err := s.Create(beads.Bead{Title: "test"})
+		created, err := s.Create(beads.Bead{Title: "test", Assignee: "mayor"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Some stores auto-assign an owner (e.g., BdStore uses git user).
-		// We verify the value round-trips rather than asserting empty.
 		got, err := s.Get(created.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Assignee != created.Assignee {
-			t.Errorf("Assignee = %q after Get, want %q from Create", got.Assignee, created.Assignee)
+		if got.Assignee != "mayor" {
+			t.Errorf("Assignee = %q after Get, want %q from Create", got.Assignee, "mayor")
+		}
+	})
+
+	t.Run("CreateFromRoundTrips", func(t *testing.T) {
+		s := newStore()
+		created, err := s.Create(beads.Bead{Title: "test", From: "priya"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Get(created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.From != "priya" {
+			t.Errorf("From = %q after Get, want %q from Create", got.From, "priya")
 		}
 	})
 

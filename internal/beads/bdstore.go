@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -374,6 +375,10 @@ func parseIssuesTolerant(data []byte) []bdIssue {
 // second precision because dolt stores timestamps at second granularity —
 // bd create may return sub-second precision that bd show then truncates.
 func (b *bdIssue) toBead() Bead {
+	from := b.From
+	if from == "" && b.Metadata != nil {
+		from = b.Metadata["from"]
+	}
 	return Bead{
 		ID:          b.ID,
 		Title:       b.Title,
@@ -381,7 +386,7 @@ func (b *bdIssue) toBead() Bead {
 		Type:        b.IssueType,
 		CreatedAt:   b.CreatedAt.Truncate(time.Second),
 		Assignee:    b.Assignee,
-		From:        b.From,
+		From:        from,
 		ParentID:    b.ParentID,
 		Ref:         b.Ref,
 		Needs:       b.Needs,
@@ -425,14 +430,26 @@ func (s *BdStore) Create(b Bead) (Bead, error) {
 	if b.Description != "" {
 		args = append(args, "--description", b.Description)
 	}
+	if b.Assignee != "" {
+		args = append(args, "--assignee", b.Assignee)
+	}
 	for _, l := range b.Labels {
 		args = append(args, "--labels", l)
 	}
 	if b.ParentID != "" {
 		args = append(args, "--parent", b.ParentID)
 	}
-	if len(b.Metadata) > 0 {
-		metaJSON, err := json.Marshal(b.Metadata)
+	metadata := maps.Clone(b.Metadata)
+	if b.From != "" {
+		if metadata == nil {
+			metadata = make(map[string]string, 1)
+		}
+		if metadata["from"] == "" {
+			metadata["from"] = b.From
+		}
+	}
+	if len(metadata) > 0 {
+		metaJSON, err := json.Marshal(metadata)
 		if err != nil {
 			return Bead{}, fmt.Errorf("bd create: marshaling metadata: %w", err)
 		}
@@ -446,7 +463,17 @@ func (s *BdStore) Create(b Bead) (Bead, error) {
 	if err := json.Unmarshal(extractJSON(out), &issue); err != nil {
 		return Bead{}, fmt.Errorf("bd create: parsing JSON: %w", err)
 	}
-	return issue.toBead(), nil
+	created := issue.toBead()
+	if created.Assignee == "" {
+		created.Assignee = b.Assignee
+	}
+	if created.From == "" {
+		created.From = b.From
+	}
+	if created.Metadata == nil && len(metadata) > 0 {
+		created.Metadata = metadata
+	}
+	return created, nil
 }
 
 // Get retrieves a bead by ID via bd show.

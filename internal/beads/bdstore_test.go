@@ -119,6 +119,38 @@ func TestBdStoreCreateBadJSON(t *testing.T) {
 	}
 }
 
+func TestBdStoreCreatePassesAssigneeAndFromMetadata(t *testing.T) {
+	var gotArgs []string
+	runner := func(_, _ string, args ...string) ([]byte, error) {
+		gotArgs = args
+		return []byte(`{"id":"bd-msg-1","title":"Update reminder","status":"open","issue_type":"message","created_at":"2025-01-15T10:30:00Z","assignee":"corp/lawrence","metadata":{"from":"priya"}}`), nil
+	}
+	s := beads.NewBdStore("/city", runner)
+	b, err := s.Create(beads.Bead{
+		Title:       "Update reminder",
+		Type:        "message",
+		Assignee:    "corp/lawrence",
+		From:        "priya",
+		Description: "Friendly nudge",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(gotArgs, " ")
+	if !strings.Contains(args, "--assignee corp/lawrence") {
+		t.Fatalf("args = %q, want assignee flag", args)
+	}
+	if !strings.Contains(args, `"from":"priya"`) {
+		t.Fatalf("args = %q, want sender metadata", args)
+	}
+	if b.Assignee != "corp/lawrence" {
+		t.Fatalf("Assignee = %q, want corp/lawrence", b.Assignee)
+	}
+	if b.From != "priya" {
+		t.Fatalf("From = %q, want priya", b.From)
+	}
+}
+
 // --- Get ---
 
 func TestBdStoreGet(t *testing.T) {
@@ -140,6 +172,25 @@ func TestBdStoreGet(t *testing.T) {
 	}
 	if b.Assignee != "alice" {
 		t.Errorf("Assignee = %q, want %q", b.Assignee, "alice")
+	}
+}
+
+func TestBdIssueToBeadFallsBackToMetadataFrom(t *testing.T) {
+	runner := fakeRunner(map[string]struct {
+		out []byte
+		err error
+	}{
+		`bd show --json bd-msg-1`: {
+			out: []byte(`[{"id":"bd-msg-1","title":"Update reminder","status":"open","issue_type":"message","created_at":"2025-01-15T10:30:00Z","assignee":"corp/lawrence","metadata":{"from":"priya"}}]`),
+		},
+	})
+	s := beads.NewBdStore("/city", runner)
+	b, err := s.Get("bd-msg-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.From != "priya" {
+		t.Fatalf("From = %q, want priya", b.From)
 	}
 }
 
