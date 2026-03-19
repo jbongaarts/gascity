@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,6 +29,15 @@ func (f *fakeServiceRegistry) Get(name string) (workspacesvc.Status, bool) {
 		}
 	}
 	return workspacesvc.Status{}, false
+}
+
+func (f *fakeServiceRegistry) Restart(name string) error {
+	for _, item := range f.items {
+		if item.ServiceName == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("service %q not found", name)
 }
 
 func (f *fakeServiceRegistry) AuthorizeAndServeHTTP(name string, w http.ResponseWriter, r *http.Request, authorize func(workspacesvc.Status) bool) bool {

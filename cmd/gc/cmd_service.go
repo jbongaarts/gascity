@@ -26,7 +26,7 @@ func newServiceCmd(stdout, stderr io.Writer) *cobra.Command {
 		Args:  cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
 			if len(args) == 0 {
-				fmt.Fprintln(stderr, "gc service: missing subcommand (list, doctor)") //nolint:errcheck // best-effort stderr
+				fmt.Fprintln(stderr, "gc service: missing subcommand (list, doctor, restart)") //nolint:errcheck // best-effort stderr
 			} else {
 				fmt.Fprintf(stderr, "gc service: unknown subcommand %q\n", args[0]) //nolint:errcheck // best-effort stderr
 			}
@@ -36,6 +36,7 @@ func newServiceCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(
 		newServiceListCmd(stdout, stderr),
 		newServiceDoctorCmd(stdout, stderr),
+		newServiceRestartCmd(stdout, stderr),
 	)
 	return cmd
 }
@@ -93,6 +94,66 @@ func cmdServiceDoctor(name string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return doServiceDoctor(cfg, serviceReadClient(cityPath, cfg), name, stdout, stderr)
+}
+
+func newServiceRestartCmd(stdout, stderr io.Writer) *cobra.Command {
+	return &cobra.Command{
+		Use:   "restart <name>",
+		Short: "Restart a workspace service",
+		Long: `Stop and restart a workspace service by name.
+
+The controller closes the current service process and starts a fresh one.
+Useful after updating pack scripts without a full city restart.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if cmdServiceRestart(args[0], stdout, stderr) != 0 {
+				return errExit
+			}
+			return nil
+		},
+	}
+}
+
+func cmdServiceRestart(name string, stdout, stderr io.Writer) int {
+	cityPath, err := resolveCity()
+	if err != nil {
+		fmt.Fprintf(stderr, "gc service restart: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	cfg, err := loadCityConfig(cityPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc service restart: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	client := serviceRestartClient(cityPath, cfg)
+	if client == nil {
+		fmt.Fprintln(stderr, "gc service restart: controller is not running") //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	if err := client.RestartService(name); err != nil {
+		fmt.Fprintf(stderr, "gc service restart: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	fmt.Fprintf(stdout, "Service %q restarted.\n", name) //nolint:errcheck // best-effort stdout
+	return 0
+}
+
+func serviceRestartClient(cityPath string, cfg *config.City) *api.Client {
+	if controllerAlive(cityPath) != 0 && cfg.API.Port > 0 {
+		bind := cfg.API.BindOrDefault()
+		switch bind {
+		case "0.0.0.0":
+			bind = "127.0.0.1"
+		case "::", "[::]":
+			bind = "::1"
+		}
+		baseURL := fmt.Sprintf("http://%s", net.JoinHostPort(bind, strconv.Itoa(cfg.API.Port)))
+		return api.NewClient(baseURL)
+	}
+	if client := supervisorCityAPIClient(cityPath); client != nil {
+		return client
+	}
+	return nil
 }
 
 func doServiceList(cfg *config.City, reader serviceStatusReader, stdout, stderr io.Writer) int {

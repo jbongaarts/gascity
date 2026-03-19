@@ -109,6 +109,11 @@ func (c *Client) GetService(name string) (workspacesvc.Status, error) {
 	return resp, nil
 }
 
+// RestartService restarts a service via POST /v0/service/{name}/restart.
+func (c *Client) RestartService(name string) error {
+	return c.doMutation("POST", "/v0/service/"+url.PathEscape(name)+"/restart", nil)
+}
+
 // SuspendCity suspends the city via PATCH /v0/city.
 func (c *Client) SuspendCity() error {
 	return c.patchCity(true)

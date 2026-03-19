@@ -32,6 +32,24 @@ func (s *Server) handleServiceGet(w http.ResponseWriter, r *http.Request) {
 	writeIndexJSON(w, s.latestIndex(), item)
 }
 
+func (s *Server) handleServiceRestart(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	reg := s.state.ServiceRegistry()
+	if reg == nil {
+		writeError(w, http.StatusNotFound, "not_found", "service "+name+" not found")
+		return
+	}
+	if err := reg.Restart(name); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeError(w, http.StatusNotFound, "not_found", err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "action": "restart", "service": name})
+}
+
 func (s *Server) handleServiceProxy(w http.ResponseWriter, r *http.Request) {
 	reg := s.state.ServiceRegistry()
 	if reg == nil {

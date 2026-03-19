@@ -271,5 +271,6 @@ func (s *Server) registerRoutes() {
 	// Workspace services
 	s.mux.HandleFunc("GET /v0/services", s.handleServiceList)
 	s.mux.HandleFunc("GET /v0/service/{name}", s.handleServiceGet)
+	s.mux.HandleFunc("POST /v0/service/{name}/restart", s.handleServiceRestart)
 	s.mux.HandleFunc("/svc/", s.handleServiceProxy)
 }

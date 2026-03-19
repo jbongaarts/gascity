@@ -342,6 +342,77 @@ func (m *Manager) Get(name string) (Status, bool) {
 	return e.status, true
 }
 
+// Restart closes and recreates a single service instance by name.
+func (m *Manager) Restart(name string) error {
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
+	m.mu.Lock()
+	e, ok := m.entries[name]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("service %q not found", name)
+	}
+	if m.closed {
+		m.mu.Unlock()
+		return fmt.Errorf("manager is closed")
+	}
+	oldInst := e.inst
+	spec := e.spec
+	m.mu.Unlock()
+
+	if oldInst != nil {
+		_ = oldInst.Close()
+	}
+
+	now := time.Now().UTC()
+	refs := m.currentPublicationRefs()
+	base := baseStatus(m.rt.Config(), m.rt.PublicationConfig(), refs, spec, now)
+	stateRoot, err := ensureStateRoot(m.rt.CityPath(), spec)
+	base.StateRoot = stateRoot
+	if err != nil {
+		base.State = "degraded"
+		base.LocalState = "config_error"
+		base.Reason = err.Error()
+		m.mu.Lock()
+		e.inst = nil
+		e.status = base
+		m.mu.Unlock()
+		return fmt.Errorf("restart service %q: %w", name, err)
+	}
+
+	var newInst Instance
+	switch spec.KindOrDefault() {
+	case "workflow":
+		factory := lookupWorkflowContract(spec.Workflow.Contract)
+		if factory == nil {
+			return fmt.Errorf("restart service %q: unsupported workflow contract %q", name, spec.Workflow.Contract)
+		}
+		newInst, err = factory(m.rt, spec)
+	case "proxy_process":
+		newInst, err = newProxyProcessInstance(m.rt, spec, base)
+	default:
+		return fmt.Errorf("restart service %q: unsupported kind %q", name, spec.Kind)
+	}
+	if err != nil {
+		base.State = "degraded"
+		base.LocalState = "restart_failed"
+		base.Reason = err.Error()
+		m.mu.Lock()
+		e.inst = nil
+		e.status = base
+		m.mu.Unlock()
+		return fmt.Errorf("restart service %q: %w", name, err)
+	}
+
+	base = mergeStatus(base, newInst.Status())
+	m.mu.Lock()
+	e.inst = newInst
+	e.status = base
+	m.mu.Unlock()
+	return nil
+}
+
 // AuthorizeAndServeHTTP routes /svc/{name}/... requests to the matching
 // service instance using one registry snapshot for authorization and dispatch.
 func (m *Manager) AuthorizeAndServeHTTP(name string, w http.ResponseWriter, r *http.Request, authorize func(Status) bool) bool {

@@ -59,6 +59,7 @@ type Registry interface {
 	List() []Status
 	Get(name string) (Status, bool)
 	AuthorizeAndServeHTTP(name string, w http.ResponseWriter, r *http.Request, authorize func(Status) bool) bool
+	Restart(name string) error
 }
 
 // WorkflowFactory constructs a workflow service for a known contract.
