@@ -23,6 +23,7 @@ type ConditionEnv struct {
 	BeadID               string
 	Iteration            int
 	CityPath             string
+	WorkDir              string
 	WispID               string
 	DocPath              string // from var.doc_path, may be empty
 	ArtifactDir          string
@@ -71,6 +72,9 @@ func (ce ConditionEnv) Environ() []string {
 	}
 	if ce.AgentModel != "" {
 		env = append(env, "GC_AGENT_MODEL="+ce.AgentModel)
+	}
+	if ce.WorkDir != "" {
+		env = append(env, "GC_WORK_DIR="+ce.WorkDir)
 	}
 
 	return env
@@ -173,6 +177,9 @@ func runOnce(ctx context.Context, scriptPath string, env ConditionEnv, timeout t
 
 	cmd := exec.CommandContext(execCtx, scriptPath)
 	cmd.Dir = env.CityPath
+	if env.WorkDir != "" {
+		cmd.Dir = env.WorkDir
+	}
 	cmd.Env = env.Environ()
 	// WaitDelay ensures cmd.Wait returns promptly after the context
 	// cancels and SIGKILL is sent, even if child I/O pipes are still open.

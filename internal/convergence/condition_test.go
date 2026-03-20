@@ -254,6 +254,41 @@ func TestRunConditionFail(t *testing.T) {
 	}
 }
 
+func TestRunConditionUsesWorkDir(t *testing.T) {
+	cityDir := t.TempDir()
+	workDir := filepath.Join(cityDir, "work")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, "target.txt"), []byte("ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	script := filepath.Join(cityDir, "check-workdir.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\npwd\ncat target.txt\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	env := ConditionEnv{
+		BeadID:      "b-workdir",
+		CityPath:    cityDir,
+		WorkDir:     workDir,
+		WispID:      "w-workdir",
+		ArtifactDir: cityDir,
+	}
+
+	result := RunCondition(context.Background(), script, env, 5*time.Second, 0)
+	if result.Outcome != GatePass {
+		t.Fatalf("Outcome = %q, want %q (stderr=%q)", result.Outcome, GatePass, result.Stderr)
+	}
+	if !strings.Contains(result.Stdout, workDir) {
+		t.Errorf("Stdout = %q, want to contain workdir %q", result.Stdout, workDir)
+	}
+	if !strings.Contains(result.Stdout, "ok") {
+		t.Errorf("Stdout = %q, want to contain file contents", result.Stdout)
+	}
+}
+
 func TestRunConditionTimeout(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "slow.sh")
