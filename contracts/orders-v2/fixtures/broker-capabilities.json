@@ -6,7 +6,7 @@
       "monitor": true,
       "launch": true,
       "workflow_snapshot": true,
-      "workflow_live": false,
+      "workflow_live": true,
       "pool_targets": false,
       "bead_picker": false,
       "orders_v2_contract": {
