@@ -161,7 +161,11 @@ func (s *Server) handleWorkflowDelete(w http.ResponseWriter, r *http.Request) {
 		if info.store == nil {
 			continue
 		}
-		if scopeKind == "rig" && scopeRef != "" && info.scopeRef != scopeRef {
+		// Skip stores that don't match the requested scope.
+		if scopeKind != "" && info.scopeKind != scopeKind {
+			continue
+		}
+		if scopeRef != "" && info.scopeRef != scopeRef {
 			continue
 		}
 
