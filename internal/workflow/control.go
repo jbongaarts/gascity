@@ -354,6 +354,13 @@ func findLatestAttempt(store beads.Store, control beads.Bead) (beads.Bead, error
 			continue
 		}
 
+		// Skip control beads (scope-check, workflow-finalize, fanout, etc.)
+		// that happen to be blocking deps with gc.attempt set.
+		switch b.Metadata["gc.kind"] {
+		case "scope-check", "workflow-finalize", "fanout", "check", "retry-eval", "retry", "ralph":
+			continue
+		}
+
 		attemptNum, _ := strconv.Atoi(b.Metadata["gc.attempt"])
 		if attemptNum > latestAttempt {
 			latestAttempt = attemptNum
