@@ -1,22 +1,16 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
 )
 
 var errWorkflowNotFound = errors.New("workflow not found")
-
-type workflowSessionRef struct {
-	bead        beads.Bead
-	sessionName string
-}
 
 type workflowSnapshotResponse struct {
 	WorkflowID        string                 `json:"workflow_id"`
@@ -55,42 +49,13 @@ type workflowDepResponse struct {
 	Kind string `json:"kind,omitempty"`
 }
 
-type logicalAttemptResponse struct {
-	BeadID    string         `json:"bead_id"`
-	Status    string         `json:"status"`
-	Attempt   int            `json:"attempt"`
-	StartedAt string         `json:"started_at,omitempty"`
-	UpdatedAt string         `json:"updated_at,omitempty"`
-	Summary   map[string]any `json:"summary,omitempty"`
-}
-
-type sessionLinkResponse struct {
-	ProjectID   string `json:"project_id"`
-	SessionID   string `json:"session_id"`
-	SessionName string `json:"session_name"`
-	Assignee    string `json:"assignee"`
-}
-
-type logicalNodeResponse struct {
-	ID            string                   `json:"id"`
-	Title         string                   `json:"title"`
-	Kind          string                   `json:"kind"`
-	Status        string                   `json:"status"`
-	ScopeRef      string                   `json:"scope_ref,omitempty"`
-	CurrentBeadID string                   `json:"current_bead_id,omitempty"`
-	AttemptBadge  string                   `json:"attempt_badge,omitempty"`
-	AttemptCount  *int                     `json:"attempt_count,omitempty"`
-	ActiveAttempt *int                     `json:"active_attempt,omitempty"`
-	Attempts      []logicalAttemptResponse `json:"attempts,omitempty"`
-	Metadata      map[string]any           `json:"metadata"`
-	SessionLink   *sessionLinkResponse     `json:"session_link,omitempty"`
-}
-
-type scopeGroupResponse struct {
-	ScopeRef             string   `json:"scope_ref"`
-	Label                string   `json:"label"`
-	MemberLogicalNodeIDs []string `json:"member_logical_node_ids"`
-}
+// Presentation types (logical_nodes, logical_edges, scope_groups) are
+// computed by the MC server's workflow_presentation module. GC exports
+// empty arrays — these types exist only for JSON serialization.
+type (
+	logicalNodeResponse = json.RawMessage
+	scopeGroupResponse  = json.RawMessage
+)
 
 type workflowStoreInfo struct {
 	ref       string
@@ -102,13 +67,6 @@ type workflowStoreInfo struct {
 type workflowRootMatch struct {
 	info workflowStoreInfo
 	root beads.Bead
-}
-
-type logicalGroup struct {
-	id      string
-	order   int
-	base    *beads.Bead
-	members []beads.Bead
 }
 
 func (s *Server) handleWorkflowGet(w http.ResponseWriter, r *http.Request) {
@@ -334,8 +292,7 @@ func (s *Server) snapshotFromStore(info workflowStoreInfo, root beads.Bead, fall
 		}
 	}
 
-	sessionIndex := s.workflowSessionIndex()
-	workflowDeps, logicalDeps, logicalNodes, scopeGroups, partial := buildWorkflowGraph(root, workflowBeads, beadIndex, store, sessionIndex)
+	workflowDeps, partial := collectWorkflowDeps(store, beadIndex)
 	partial = partial || listPartial
 	scopeKind, scopeRef := workflowSnapshotScope(info, root, fallbackScopeKind, fallbackScopeRef, cityScopeRef)
 
@@ -363,9 +320,9 @@ func (s *Server) snapshotFromStore(info workflowStoreInfo, root beads.Bead, fall
 		ScopeRef:          scopeRef,
 		Beads:             beadResponses,
 		Deps:              workflowDeps,
-		LogicalNodes:      logicalNodes,
-		LogicalEdges:      logicalDeps,
-		ScopeGroups:       scopeGroups,
+		LogicalNodes:      []logicalNodeResponse{},
+		LogicalEdges:      []workflowDepResponse{},
+		ScopeGroups:       []scopeGroupResponse{},
 		Partial:           partial,
 		ResolvedRootStore: info.ref,
 		StoresScanned:     storesScanned,
@@ -502,43 +459,11 @@ func workflowRootScope(root beads.Bead) (string, string) {
 	return scopeKind, scopeRef
 }
 
-func buildWorkflowGraph(
-	root beads.Bead,
-	workflowBeads []beads.Bead,
-	beadIndex map[string]beads.Bead,
-	store beads.Store,
-	sessionIndex map[string]workflowSessionRef,
-) ([]workflowDepResponse, []workflowDepResponse, []logicalNodeResponse, []scopeGroupResponse, bool) {
-	logicalGroups := make(map[string]*logicalGroup, len(workflowBeads))
-	logicalIDForBead := make(map[string]string, len(workflowBeads))
-
-	for idx, bead := range workflowBeads {
-		key := logicalGroupID(workflowBeads, bead)
-		logicalIDForBead[bead.ID] = key
-		group := logicalGroups[key]
-		if group == nil {
-			group = &logicalGroup{id: key, order: idx}
-			logicalGroups[key] = group
-		}
-		group.members = append(group.members, bead)
-		if bead.ID == key {
-			beadCopy := bead
-			group.base = &beadCopy
-		}
-	}
-
-	workflowDeps, logicalDeps, partial := collectWorkflowDeps(store, beadIndex, logicalIDForBead)
-	nodes := buildLogicalNodes(root, workflowBeads, logicalGroups, sessionIndex)
-	scopeGroups := buildScopeGroups(nodes, workflowBeads)
-
-	return workflowDeps, logicalDeps, nodes, scopeGroups, partial
-}
-
-func collectWorkflowDeps(store beads.Store, beadIndex map[string]beads.Bead, logicalIDForBead map[string]string) ([]workflowDepResponse, []workflowDepResponse, bool) {
+// collectWorkflowDeps returns the physical bead-to-bead dependencies.
+// Logical edge computation is handled by the MC server's presentation layer.
+func collectWorkflowDeps(store beads.Store, beadIndex map[string]beads.Bead) ([]workflowDepResponse, bool) {
 	workflowDeps := make([]workflowDepResponse, 0)
-	logicalDeps := make([]workflowDepResponse, 0)
-	seenWorkflow := map[string]bool{}
-	seenLogical := map[string]bool{}
+	seen := map[string]bool{}
 	partial := false
 
 	for beadID := range beadIndex {
@@ -556,31 +481,15 @@ func collectWorkflowDeps(store beads.Store, beadIndex map[string]beads.Bead, log
 				To:   dep.IssueID,
 				Kind: dep.Type,
 			}
-			workflowKey := edge.From + "|" + edge.To + "|" + edge.Kind
-			if !seenWorkflow[workflowKey] {
+			key := edge.From + "|" + edge.To + "|" + edge.Kind
+			if !seen[key] {
 				workflowDeps = append(workflowDeps, edge)
-				seenWorkflow[workflowKey] = true
-			}
-
-			fromLogical := logicalIDForBead[dep.DependsOnID]
-			toLogical := logicalIDForBead[dep.IssueID]
-			if fromLogical == "" || toLogical == "" || fromLogical == toLogical {
-				continue
-			}
-			logicalEdge := workflowDepResponse{
-				From: fromLogical,
-				To:   toLogical,
-				Kind: dep.Type,
-			}
-			logicalKey := logicalEdge.From + "|" + logicalEdge.To + "|" + logicalEdge.Kind
-			if !seenLogical[logicalKey] {
-				logicalDeps = append(logicalDeps, logicalEdge)
-				seenLogical[logicalKey] = true
+				seen[key] = true
 			}
 		}
 	}
 
-	return workflowDeps, logicalDeps, partial
+	return workflowDeps, partial
 }
 
 func prefetchedDepsForWorkflowBeads(workflowBeads []beads.Bead) (map[string][]beads.Dep, bool) {
@@ -602,290 +511,34 @@ func prefetchedDepsForWorkflowBeads(workflowBeads []beads.Bead) (map[string][]be
 	return depMap, hasPrefetchedDeps
 }
 
-func buildLogicalNodes(root beads.Bead, workflowBeads []beads.Bead, groups map[string]*logicalGroup, sessionIndex map[string]workflowSessionRef) []logicalNodeResponse {
-	ordered := make([]*logicalGroup, 0, len(groups))
-	for _, group := range groups {
-		ordered = append(ordered, group)
+// findCanonicalControl finds the earliest retry/ralph control bead that
+// shares the same gc.step_id as the given control bead. This collapses
+// controls across ralph iterations (e.g., iteration.1.review-own-code and
+// iteration.2.review-own-code) into a single logical node. Returns "" if
+// this bead is already the canonical one or no match is found.
+
+func workflowAttempt(bead beads.Bead) *int {
+	if attempt := workflowAttemptValue(bead); attempt > 0 {
+		return &attempt
 	}
-	sort.SliceStable(ordered, func(i, j int) bool {
-		return ordered[i].order < ordered[j].order
-	})
-
-	nodes := make([]logicalNodeResponse, 0, len(ordered))
-	for _, group := range ordered {
-		base := logicalBaseBead(group)
-		current := logicalCurrentBead(group, base)
-		scopeRef := logicalScopeRef(workflowBeads, root.ID, base, current)
-		attempts, attemptCount, activeAttempt, attemptBadge := buildLogicalAttempts(group, base)
-		metaSource := current
-		if base.ID != "" {
-			metaSource = base
-		}
-
-		node := logicalNodeResponse{
-			ID:            group.id,
-			Title:         logicalTitle(base, current),
-			Kind:          logicalKind(base, current),
-			Status:        logicalStatus(base, current),
-			ScopeRef:      scopeRef,
-			CurrentBeadID: current.ID,
-			AttemptBadge:  attemptBadge,
-			Attempts:      attempts,
-			Metadata:      stringMapToAny(metaSource.Metadata),
-			SessionLink:   sessionLinkFor(current, sessionIndex),
-		}
-		if current.ID == "" && base.ID == root.ID {
-			node.CurrentBeadID = root.ID
-		}
-		if attemptCount > 0 {
-			node.AttemptCount = &attemptCount
-		}
-		if activeAttempt > 0 {
-			node.ActiveAttempt = &activeAttempt
-		}
-		nodes = append(nodes, node)
-	}
-
-	return nodes
+	return nil
 }
 
-func buildLogicalAttempts(group *logicalGroup, base beads.Bead) ([]logicalAttemptResponse, int, int, string) {
-	attemptBeads := make(map[int][]beads.Bead)
-	maxAttempts := 0
-	for _, bead := range group.members {
-		if attempt := workflowAttemptValue(bead); attempt > 0 {
-			attemptBeads[attempt] = append(attemptBeads[attempt], bead)
-		}
-		if value := metadataInt(bead.Metadata, "gc.max_attempts"); value > maxAttempts {
-			maxAttempts = value
-		}
+func workflowAttemptValue(bead beads.Bead) int {
+	raw := strings.TrimSpace(bead.Metadata["gc.attempt"])
+	if raw == "" {
+		return 0
 	}
-	if len(attemptBeads) == 0 {
-		return nil, 0, 0, ""
-	}
-
-	attemptNums := make([]int, 0, len(attemptBeads))
-	for attempt := range attemptBeads {
-		attemptNums = append(attemptNums, attempt)
-	}
-	sort.Ints(attemptNums)
-
-	attempts := make([]logicalAttemptResponse, 0, len(attemptNums))
-	baseStatus := workflowStatus(base)
-	baseTerminal := isTerminalWorkflowStatus(baseStatus)
-	activeAttempt := 0
-	displayAttempt := 0
-	for idx, attempt := range attemptNums {
-		beadsForAttempt := attemptBeads[attempt]
-		primary := preferredAttemptBead(beadsForAttempt)
-		status := aggregateAttemptStatus(beadsForAttempt)
-		if baseTerminal && idx == len(attemptNums)-1 {
-			status = baseStatus
-		}
-		if !baseTerminal && (status == "active" || status == "pending") {
-			activeAttempt = attempt
-		}
-		displayAttempt = attempt
-
-		summary := map[string]any{
-			"bead_ids": attemptBeadIDs(beadsForAttempt),
-			"kinds":    attemptKinds(beadsForAttempt),
-		}
-		entry := logicalAttemptResponse{
-			BeadID:  primary.ID,
-			Status:  status,
-			Attempt: attempt,
-			Summary: summary,
-		}
-		if !primary.CreatedAt.IsZero() {
-			entry.StartedAt = primary.CreatedAt.Format(time.RFC3339)
-		}
-		attempts = append(attempts, entry)
-	}
-
-	if displayAttempt == 0 {
-		return attempts, len(attemptNums), 0, ""
-	}
-	if maxAttempts > 0 {
-		return attempts, len(attemptNums), activeAttempt, strconv.Itoa(displayAttempt) + "/" + strconv.Itoa(maxAttempts)
-	}
-	return attempts, len(attemptNums), activeAttempt, strconv.Itoa(displayAttempt)
+	v, _ := strconv.Atoi(raw)
+	return v
 }
 
-func buildScopeGroups(nodes []logicalNodeResponse, workflowBeads []beads.Bead) []scopeGroupResponse {
-	membersByScope := make(map[string][]string)
-	for _, node := range nodes {
-		scopeRef := strings.TrimSpace(node.ScopeRef)
-		if scopeRef == "" {
-			continue
-		}
-		members := membersByScope[scopeRef]
-		if !containsString(members, node.ID) {
-			membersByScope[scopeRef] = append(members, node.ID)
-		}
+func isTerminalWorkflowStatus(status string) bool {
+	switch status {
+	case "completed", "skipped", "failed":
+		return true
 	}
-
-	scopeRefs := make([]string, 0, len(membersByScope))
-	for scopeRef := range membersByScope {
-		scopeRefs = append(scopeRefs, scopeRef)
-	}
-	sort.Strings(scopeRefs)
-
-	scopeGroups := make([]scopeGroupResponse, 0, len(scopeRefs))
-	for _, scopeRef := range scopeRefs {
-		scopeGroups = append(scopeGroups, scopeGroupResponse{
-			ScopeRef:             scopeRef,
-			Label:                scopeGroupLabel(scopeRef, workflowBeads),
-			MemberLogicalNodeIDs: membersByScope[scopeRef],
-		})
-	}
-	return scopeGroups
-}
-
-func scopeGroupLabel(scopeRef string, workflowBeads []beads.Bead) string {
-	for _, bead := range workflowBeads {
-		if strings.TrimSpace(bead.Metadata["gc.kind"]) != "scope" {
-			continue
-		}
-		if matchesScopeRef(bead, scopeRef) {
-			return bead.Title
-		}
-	}
-	return scopeRef
-}
-
-func logicalBaseBead(group *logicalGroup) beads.Bead {
-	if group.base != nil {
-		return *group.base
-	}
-	if len(group.members) == 0 {
-		return beads.Bead{}
-	}
-	return group.members[0]
-}
-
-func logicalCurrentBead(group *logicalGroup, base beads.Bead) beads.Bead {
-	// For v2 retry/ralph control beads, even when terminal, prefer the
-	// latest attempt bead for session link resolution (the control bead
-	// has no assignee).
-	kind := base.Metadata["gc.kind"]
-	isControl := kind == "retry" || kind == "ralph"
-	if isTerminalWorkflowStatus(workflowStatus(base)) && !isControl {
-		return base
-	}
-
-	candidates := make([]beads.Bead, 0, len(group.members))
-	for _, bead := range group.members {
-		if bead.ID == base.ID {
-			continue
-		}
-		candidates = append(candidates, bead)
-	}
-	if len(candidates) == 0 {
-		return base
-	}
-
-	sort.SliceStable(candidates, func(i, j int) bool {
-		iAttempt := workflowAttemptValue(candidates[i])
-		jAttempt := workflowAttemptValue(candidates[j])
-		if iAttempt != jAttempt {
-			return iAttempt > jAttempt
-		}
-		iRank := statusRank(workflowStatus(candidates[i]))
-		jRank := statusRank(workflowStatus(candidates[j]))
-		if iRank != jRank {
-			return iRank > jRank
-		}
-		return preferredKindRank(candidates[i]) < preferredKindRank(candidates[j])
-	})
-	return candidates[0]
-}
-
-func logicalGroupID(workflowBeads []beads.Bead, bead beads.Bead) string {
-	if logicalID := strings.TrimSpace(bead.Metadata["gc.logical_bead_id"]); logicalID != "" {
-		return logicalID
-	}
-	switch strings.TrimSpace(bead.Metadata["gc.kind"]) {
-	case "ralph", "retry":
-		return bead.ID
-	}
-	for _, logicalStepRef := range logicalStepRefCandidatesForBead(bead) {
-		for _, candidate := range workflowBeads {
-			switch strings.TrimSpace(candidate.Metadata["gc.kind"]) {
-			case "ralph", "retry":
-			default:
-				continue
-			}
-			candidateRef := strings.TrimSpace(candidate.Metadata["gc.step_ref"])
-			if candidateRef == "" {
-				candidateRef = strings.TrimSpace(candidate.Ref)
-			}
-			if candidateRef == logicalStepRef {
-				return candidate.ID
-			}
-		}
-	}
-	return bead.ID
-}
-
-func logicalTitle(base, current beads.Bead) string {
-	if strings.TrimSpace(base.Title) != "" {
-		return base.Title
-	}
-	return current.Title
-}
-
-func logicalKind(base, current beads.Bead) string {
-	if original := strings.TrimSpace(base.Metadata["gc.original_kind"]); original != "" {
-		return original
-	}
-	if kind := workflowKind(base); kind != "" {
-		return kind
-	}
-	return workflowKind(current)
-}
-
-func logicalScopeRef(workflowBeads []beads.Bead, rootID string, base, current beads.Bead) string {
-	scopeRef := strings.TrimSpace(base.Metadata["gc.scope_ref"])
-	if scopeRef == "" {
-		scopeRef = strings.TrimSpace(current.Metadata["gc.scope_ref"])
-	}
-	if scopeRef == "" {
-		return ""
-	}
-	if body, ok := findScopeBody(workflowBeads, rootID, scopeRef); ok {
-		if stepRef := strings.TrimSpace(body.Metadata["gc.step_ref"]); stepRef != "" {
-			return stepRef
-		}
-		if ref := strings.TrimSpace(body.Ref); ref != "" {
-			return ref
-		}
-	}
-	return scopeRef
-}
-
-func logicalStatus(base, current beads.Bead) string {
-	if status := workflowStatus(base); isTerminalWorkflowStatus(status) {
-		return status
-	}
-	if status := workflowStatus(current); status != "" {
-		return status
-	}
-	return workflowStatus(base)
-}
-
-func aggregateAttemptStatus(beadsForAttempt []beads.Bead) string {
-	best := ""
-	bestRank := -1
-	for _, bead := range beadsForAttempt {
-		status := workflowStatus(bead)
-		rank := statusRank(status)
-		if rank > bestRank {
-			best = status
-			bestRank = rank
-		}
-	}
-	return best
+	return false
 }
 
 func statusRank(status string) int {
@@ -900,168 +553,40 @@ func statusRank(status string) int {
 		return 2
 	case "completed":
 		return 1
-	default:
-		return 0
 	}
+	return 0
 }
 
-func isTerminalWorkflowStatus(status string) bool {
-	switch status {
-	case "completed", "skipped", "failed":
-		return true
-	default:
-		return false
-	}
-}
-
-func preferredAttemptBead(beadsForAttempt []beads.Bead) beads.Bead {
-	if len(beadsForAttempt) == 0 {
-		return beads.Bead{}
-	}
-	sorted := append([]beads.Bead(nil), beadsForAttempt...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		iRank := preferredKindRank(sorted[i])
-		jRank := preferredKindRank(sorted[j])
-		if iRank != jRank {
-			return iRank < jRank
+func containsString(values []string, target string) bool {
+	for _, v := range values {
+		if v == target {
+			return true
 		}
-		return sorted[i].CreatedAt.Before(sorted[j].CreatedAt)
-	})
-	return sorted[0]
-}
-
-func preferredKindRank(bead beads.Bead) int {
-	switch strings.TrimSpace(bead.Metadata["gc.kind"]) {
-	case "run", "retry-run":
-		return 0
-	case "scope":
-		return 1
-	case "check", "retry-eval":
-		return 2
-	case "scope-check":
-		return 3
-	default:
-		return 4
 	}
+	return false
 }
 
-func attemptBeadIDs(beadsForAttempt []beads.Bead) []string {
-	result := make([]string, 0, len(beadsForAttempt))
-	for _, bead := range beadsForAttempt {
-		result = append(result, bead.ID)
-	}
-	sort.Strings(result)
-	return result
-}
-
-func attemptKinds(beadsForAttempt []beads.Bead) []string {
-	result := make([]string, 0, len(beadsForAttempt))
-	for _, bead := range beadsForAttempt {
-		kind := workflowKind(bead)
-		if kind == "" || containsString(result, kind) {
+func findScopeBody(all []beads.Bead, rootID, scopeRef string) (beads.Bead, bool) {
+	for _, bead := range all {
+		if bead.Metadata["gc.root_bead_id"] != rootID && bead.ID != rootID {
 			continue
 		}
-		result = append(result, kind)
-	}
-	sort.Strings(result)
-	return result
-}
-
-func workflowAttempt(bead beads.Bead) *int {
-	if attempt := workflowAttemptValue(bead); attempt > 0 {
-		return &attempt
-	}
-	return nil
-}
-
-func workflowAttemptValue(bead beads.Bead) int {
-	return metadataInt(bead.Metadata, "gc.attempt")
-}
-
-func logicalStepRefForAttemptBead(bead beads.Bead) string {
-	stepRef := strings.TrimSpace(bead.Metadata["gc.step_ref"])
-	if stepRef == "" {
-		stepRef = strings.TrimSpace(bead.Ref)
-	}
-	if stepRef == "" {
-		return ""
-	}
-	kind := strings.TrimSpace(bead.Metadata["gc.kind"])
-	normalized := stepRef
-	if kind == "scope-check" && strings.HasSuffix(normalized, "-scope-check") {
-		normalized = strings.TrimSuffix(normalized, "-scope-check")
-	}
-	if trimmed, ok := trimAttemptStepRefForKind(normalized, kind, strings.TrimSpace(bead.Metadata["gc.attempt"])); ok {
-		return trimmed
-	}
-	if trimmed, ok := trimRightmostAttemptStepRef(normalized); ok {
-		return trimmed
-	}
-	if normalized != stepRef || kind == "scope-check" {
-		return normalized
-	}
-	return ""
-}
-
-func logicalStepRefCandidatesForBead(bead beads.Bead) []string {
-	candidates := make([]string, 0, 2)
-	if target := scopeCheckControlledStepRef(bead); target != "" {
-		candidates = append(candidates, target)
-	}
-	if logicalStepRef := logicalStepRefForAttemptBead(bead); logicalStepRef != "" && !containsString(candidates, logicalStepRef) {
-		candidates = append(candidates, logicalStepRef)
-	}
-	return candidates
-}
-
-func scopeCheckControlledStepRef(bead beads.Bead) string {
-	if strings.TrimSpace(bead.Metadata["gc.kind"]) != "scope-check" {
-		return ""
-	}
-	stepRef := strings.TrimSpace(bead.Metadata["gc.step_ref"])
-	if stepRef == "" {
-		stepRef = strings.TrimSpace(bead.Ref)
-	}
-	if stepRef == "" || !strings.HasSuffix(stepRef, "-scope-check") {
-		return ""
-	}
-	return strings.TrimSuffix(stepRef, "-scope-check")
-}
-
-func trimAttemptStepRefSuffix(stepRef, suffix string) (string, bool) {
-	if suffix == "" || !strings.HasSuffix(stepRef, suffix) {
-		return "", false
-	}
-	return strings.TrimSuffix(stepRef, suffix), true
-}
-
-func trimAttemptStepRefForKind(stepRef, kind, attempt string) (string, bool) {
-	if attempt == "" {
-		return "", false
-	}
-	switch kind {
-	case "run", "scope", "retry-run":
-		return trimAttemptStepRefSuffix(stepRef, ".run."+attempt)
-	case "check":
-		return trimAttemptStepRefSuffix(stepRef, ".check."+attempt)
-	case "retry-eval":
-		return trimAttemptStepRefSuffix(stepRef, ".eval."+attempt)
-	default:
-		return "", false
-	}
-}
-
-func trimRightmostAttemptStepRef(stepRef string) (string, bool) {
-	best := -1
-	for _, prefix := range []string{".run.", ".check.", ".eval.", ".iteration.", ".attempt."} {
-		if idx := strings.LastIndex(stepRef, prefix); idx > best {
-			best = idx
+		if strings.TrimSpace(bead.Metadata["gc.scope_role"]) != "body" {
+			continue
+		}
+		if matchesScopeRef(bead, scopeRef) {
+			return bead, true
 		}
 	}
-	if best <= 0 {
-		return "", false
+	return beads.Bead{}, false
+}
+
+func matchesScopeRef(bead beads.Bead, scopeRef string) bool {
+	if strings.TrimSpace(bead.Metadata["gc.scope_ref"]) == scopeRef {
+		return true
 	}
-	return stepRef[:best], true
+	stepRef := strings.TrimSpace(bead.Metadata["gc.step_ref"])
+	return stepRef == scopeRef || strings.HasSuffix(stepRef, "."+scopeRef)
 }
 
 func metadataInt(meta map[string]string, key string) int {
@@ -1077,6 +602,17 @@ func metadataInt(meta map[string]string, key string) int {
 		return 0
 	}
 	return parsed
+}
+
+func cloneStringMap(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func workflowKind(bead beads.Bead) string {
@@ -1115,86 +651,6 @@ func workflowStatus(bead beads.Bead) string {
 			return "skipped"
 		}
 		return strings.TrimSpace(bead.Status)
-	}
-}
-
-func sessionLinkFor(bead beads.Bead, sessionIndex map[string]workflowSessionRef) *sessionLinkResponse {
-	sessionName := strings.TrimSpace(bead.Assignee)
-	if sessionName == "" {
-		return nil
-	}
-
-	sessionID := sessionName
-	projectID := "city"
-	for _, key := range []string{sessionName} {
-		if key == "" {
-			continue
-		}
-		sessionRef, ok := sessionIndex[key]
-		if !ok {
-			continue
-		}
-		if sessionRef.sessionName != "" {
-			sessionName = sessionRef.sessionName
-		}
-		sessionID = sessionRef.bead.ID
-		if value := strings.TrimSpace(sessionRef.bead.Metadata["mc_project_id"]); value != "" {
-			projectID = value
-		}
-		break
-	}
-	if sessionID == "" {
-		sessionID = sessionName
-	}
-
-	return &sessionLinkResponse{
-		ProjectID:   projectID,
-		SessionID:   sessionID,
-		SessionName: sessionName,
-		Assignee:    strings.TrimSpace(bead.Assignee),
-	}
-}
-
-func (s *Server) workflowSessionIndex() map[string]workflowSessionRef {
-	index := make(map[string]workflowSessionRef)
-	store := s.state.CityBeadStore()
-	if store == nil {
-		return index
-	}
-
-	sessions, err := store.ListByLabel("gc:session", 0)
-	if err != nil {
-		sessions, err = store.List()
-		if err != nil {
-			return index
-		}
-	}
-
-	for _, bead := range sessions {
-		sessionName := strings.TrimSpace(bead.Metadata["session_name"])
-		if sessionName == "" {
-			continue
-		}
-		addWorkflowSessionRef(index, sessionName, bead)
-		addWorkflowSessionRef(index, bead.ID, bead)
-		addWorkflowSessionRef(index, bead.Metadata["agent_name"], bead)
-		addWorkflowSessionRef(index, bead.Metadata["alias"], bead)
-	}
-	return index
-}
-
-func addWorkflowSessionRef(index map[string]workflowSessionRef, key string, bead beads.Bead) {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return
-	}
-	existing, ok := index[key]
-	if ok && !(existing.bead.Status == "closed" && bead.Status != "closed") {
-		return
-	}
-	index[key] = workflowSessionRef{
-		bead:        bead,
-		sessionName: strings.TrimSpace(bead.Metadata["session_name"]),
 	}
 }
 
@@ -1284,61 +740,4 @@ func workflowCityScopeRef(cityName string) string {
 		return "city"
 	}
 	return cityName
-}
-
-func matchesScopeRef(bead beads.Bead, scopeRef string) bool {
-	if scopeRef == "" {
-		return false
-	}
-	if bead.Metadata["gc.scope_ref"] == scopeRef {
-		return true
-	}
-	stepRef := bead.Metadata["gc.step_ref"]
-	return stepRef == scopeRef || strings.HasSuffix(stepRef, "."+scopeRef)
-}
-
-func findScopeBody(all []beads.Bead, rootID, scopeRef string) (beads.Bead, bool) {
-	for _, bead := range all {
-		if bead.Metadata["gc.root_bead_id"] != rootID {
-			continue
-		}
-		if strings.TrimSpace(bead.Metadata["gc.kind"]) != "scope" {
-			continue
-		}
-		if matchesScopeRef(bead, scopeRef) {
-			return bead, true
-		}
-	}
-	return beads.Bead{}, false
-}
-
-func cloneStringMap(src map[string]string) map[string]string {
-	if len(src) == 0 {
-		return map[string]string{}
-	}
-	dst := make(map[string]string, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
-	return dst
-}
-
-func stringMapToAny(src map[string]string) map[string]any {
-	if len(src) == 0 {
-		return map[string]any{}
-	}
-	dst := make(map[string]any, len(src))
-	for key, value := range src {
-		dst[key] = value
-	}
-	return dst
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }

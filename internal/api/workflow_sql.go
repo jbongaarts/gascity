@@ -191,12 +191,8 @@ func (s *Server) tryFullWorkflowSQL(workflowID, fallbackScopeKind, fallbackScope
 
 	store := &prefetchedDepStore{deps: depMap}
 
-	// Also fetch session index via SQL to avoid another bd subprocess
-	sessionIndex, sessErr := workflowSessionIndexSQL("127.0.0.1", port, database)
-	if sessErr != nil {
-		sessionIndex = s.workflowSessionIndex() // fall back
-	}
-	workflowDeps, logicalDeps, logicalNodes, scopeGroups, partial := buildWorkflowGraph(root, workflowBeads, beadIndex, store, sessionIndex)
+	// Collect physical deps only — logical nodes are computed by MC.
+	workflowDeps, partial := collectWorkflowDeps(store, beadIndex)
 
 	scopeKind := fallbackScopeKind
 	scopeRef := fallbackScopeRef
@@ -232,9 +228,9 @@ func (s *Server) tryFullWorkflowSQL(workflowID, fallbackScopeKind, fallbackScope
 		ScopeRef:          scopeRef,
 		Beads:             beadResponses,
 		Deps:              workflowDeps,
-		LogicalNodes:      logicalNodes,
-		LogicalEdges:      logicalDeps,
-		ScopeGroups:       scopeGroups,
+		LogicalNodes:      []logicalNodeResponse{},
+		LogicalEdges:      []workflowDepResponse{},
+		ScopeGroups:       []scopeGroupResponse{},
 		Partial:           partial,
 		ResolvedRootStore: storeRef,
 		StoresScanned:     []string{storeRef},
@@ -315,66 +311,8 @@ func resolveDoltDatabase(cityPath string) string {
 	return "beads"
 }
 
-// workflowSessionIndexSQL fetches session beads via SQL for the session link index.
-func workflowSessionIndexSQL(host string, port int, database string) (map[string]workflowSessionRef, error) {
-	dsn := fmt.Sprintf("root@tcp(%s:%d)/%s?parseTime=true&timeout=5s", host, port, database)
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-
-	rows, err := db.Query(`
-		SELECT i.id, i.title, i.status, i.issue_type, i.assignee, i.metadata
-		FROM issues i
-		JOIN labels l ON l.issue_id = i.id AND l.label = 'gc:session'
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	index := make(map[string]workflowSessionRef)
-	for rows.Next() {
-		var b beads.Bead
-		var assignee sql.NullString
-		var metadataJSON []byte
-
-		if err := rows.Scan(&b.ID, &b.Title, &b.Status, &b.Type, &assignee, &metadataJSON); err != nil {
-			continue
-		}
-		b.Assignee = assignee.String
-		if len(metadataJSON) > 0 {
-			b.Metadata = make(map[string]string)
-			var raw map[string]interface{}
-			if json.Unmarshal(metadataJSON, &raw) == nil {
-				for k, v := range raw {
-					if s, ok := v.(string); ok {
-						b.Metadata[k] = s
-					}
-				}
-			}
-		}
-
-		sessionName := strings.TrimSpace(b.Metadata["session_name"])
-		if sessionName == "" {
-			continue
-		}
-		ref := workflowSessionRef{bead: b, sessionName: sessionName}
-		index[sessionName] = ref
-		if agent := strings.TrimSpace(b.Metadata["agent_name"]); agent != "" {
-			index[agent] = ref
-		}
-		if alias := strings.TrimSpace(b.Metadata["alias"]); alias != "" {
-			index[alias] = ref
-		}
-	}
-	return index, nil
-}
-
 // prefetchedDepStore wraps a pre-fetched dep map to satisfy the beads.Store
-// interface for buildWorkflowGraph, which calls store.DepList().
+// interface for collectWorkflowDeps, which calls store.DepList().
 type prefetchedDepStore struct {
 	beads.Store // embed nil Store — only DepList is called
 	deps        map[string][]beads.Dep

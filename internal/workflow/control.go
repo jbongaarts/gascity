@@ -319,9 +319,13 @@ func buildAttemptRecipe(step *formula.Step, control beads.Bead, attemptNum int) 
 		for _, child := range step.Children {
 			childID := attemptPrefix + "." + child.ID
 			childMeta := map[string]string{
-				"gc.attempt":  strconv.Itoa(attemptNum),
-				"gc.step_ref": childID,
-				"gc.step_id":  child.ID,
+				"gc.attempt":       strconv.Itoa(attemptNum),
+				"gc.step_ref":      childID,
+				"gc.step_id":       child.ID,
+				"gc.scope_ref":     attemptPrefix,
+				"gc.ralph_step_id": stepID,
+				"gc.scope_role":    "member",
+				"gc.on_fail":       "abort_scope",
 			}
 			// Copy formula-defined metadata from the child step.
 			for k, v := range child.Metadata {

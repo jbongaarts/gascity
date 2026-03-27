@@ -649,21 +649,41 @@ func resolveLogicalBeadID(store beads.Store, bead beads.Bead) string {
 		}
 	}
 	if rootID := bead.Metadata["gc.root_bead_id"]; rootID != "" {
-		if logicalStepRef := logicalStepRefForAttemptBead(bead); logicalStepRef != "" {
+		// Build candidate refs: scope-check controlled ref first (most specific),
+		// then logicalStepRefForAttemptBead (may trim attempt patterns).
+		var candidates []string
+		if controlledRef := scopeCheckControlledStepRef(bead); controlledRef != "" {
+			candidates = append(candidates, controlledRef)
+		}
+		if logicalRef := logicalStepRefForAttemptBead(bead); logicalRef != "" {
+			alreadyHave := false
+			for _, c := range candidates {
+				if c == logicalRef {
+					alreadyHave = true
+					break
+				}
+			}
+			if !alreadyHave {
+				candidates = append(candidates, logicalRef)
+			}
+		}
+		if len(candidates) > 0 {
 			all, listErr := listByWorkflowRoot(store, rootID)
 			if listErr == nil {
-				for _, candidate := range all {
-					switch candidate.Metadata["gc.kind"] {
-					case "ralph", "retry":
-					default:
-						continue
-					}
-					candidateRef := strings.TrimSpace(candidate.Metadata["gc.step_ref"])
-					if candidateRef == "" {
-						candidateRef = strings.TrimSpace(candidate.Ref)
-					}
-					if candidateRef == logicalStepRef {
-						return candidate.ID
+				for _, ref := range candidates {
+					for _, candidate := range all {
+						switch candidate.Metadata["gc.kind"] {
+						case "ralph", "retry":
+						default:
+							continue
+						}
+						candidateRef := strings.TrimSpace(candidate.Metadata["gc.step_ref"])
+						if candidateRef == "" {
+							candidateRef = strings.TrimSpace(candidate.Ref)
+						}
+						if candidateRef == ref {
+							return candidate.ID
+						}
 					}
 				}
 			}
@@ -680,42 +700,72 @@ func logicalStepRefForAttemptBead(bead beads.Bead) string {
 	if stepRef == "" {
 		return ""
 	}
+	kind := strings.TrimSpace(bead.Metadata["gc.kind"])
+	normalized := stepRef
+	if kind == "scope-check" && strings.HasSuffix(normalized, "-scope-check") {
+		normalized = strings.TrimSuffix(normalized, "-scope-check")
+	}
 	attempt := strings.TrimSpace(bead.Metadata["gc.attempt"])
-	switch bead.Metadata["gc.kind"] {
-	case "run", "scope", "retry-run":
-		if attempt != "" {
-			if trimmed, ok := trimAttemptStepRefSuffix(stepRef, ".run."+attempt); ok {
-				return trimmed
-			}
-		}
-	case "check":
-		if attempt != "" {
-			if trimmed, ok := trimAttemptStepRefSuffix(stepRef, ".check."+attempt); ok {
-				return trimmed
-			}
-		}
-	case "retry-eval":
-		if attempt != "" {
-			if trimmed, ok := trimAttemptStepRefSuffix(stepRef, ".eval."+attempt); ok {
-				return trimmed
-			}
-		}
+	if trimmed, ok := trimAttemptStepRefForKind(normalized, kind, attempt); ok {
+		return trimmed
 	}
-	// v2 pattern: attempt beads keep their original kind but carry gc.attempt.
-	// Try all suffix patterns when gc.attempt is set regardless of kind.
-	if attempt != "" {
-		for _, suffix := range []string{".run." + attempt, ".check." + attempt, ".eval." + attempt} {
-			if trimmed, ok := trimAttemptStepRefSuffix(stepRef, suffix); ok {
-				return trimmed
-			}
+	// For scope-check beads, prefer trimming attempt patterns from the
+	// normalized ref (e.g., .eval.1 from a nested retry scope-check) to
+	// resolve to the logical retry/ralph step. Fall back to normalized ref
+	// for flat scope-checks that don't have attempt patterns.
+	if kind == "scope-check" && normalized != stepRef {
+		if trimmed, ok := trimRightmostAttemptStepRef(normalized); ok {
+			return trimmed
 		}
+		return normalized
 	}
-	for _, prefix := range []string{".run.", ".check.", ".eval."} {
-		if idx := strings.LastIndex(stepRef, prefix); idx > 0 {
-			return stepRef[:idx]
-		}
+	if trimmed, ok := trimRightmostAttemptStepRef(normalized); ok {
+		return trimmed
 	}
 	return ""
+}
+
+func scopeCheckControlledStepRef(bead beads.Bead) string {
+	if strings.TrimSpace(bead.Metadata["gc.kind"]) != "scope-check" {
+		return ""
+	}
+	stepRef := strings.TrimSpace(bead.Metadata["gc.step_ref"])
+	if stepRef == "" {
+		stepRef = strings.TrimSpace(bead.Ref)
+	}
+	if stepRef == "" || !strings.HasSuffix(stepRef, "-scope-check") {
+		return ""
+	}
+	return strings.TrimSuffix(stepRef, "-scope-check")
+}
+
+func trimAttemptStepRefForKind(stepRef, kind, attempt string) (string, bool) {
+	if attempt == "" {
+		return "", false
+	}
+	switch kind {
+	case "run", "scope", "retry-run":
+		return trimAttemptStepRefSuffix(stepRef, ".run."+attempt)
+	case "check":
+		return trimAttemptStepRefSuffix(stepRef, ".check."+attempt)
+	case "retry-eval":
+		return trimAttemptStepRefSuffix(stepRef, ".eval."+attempt)
+	default:
+		return "", false
+	}
+}
+
+func trimRightmostAttemptStepRef(stepRef string) (string, bool) {
+	best := -1
+	for _, prefix := range []string{".run.", ".check.", ".eval.", ".iteration.", ".attempt."} {
+		if idx := strings.LastIndex(stepRef, prefix); idx > best {
+			best = idx
+		}
+	}
+	if best <= 0 {
+		return "", false
+	}
+	return stepRef[:best], true
 }
 
 func trimAttemptStepRefSuffix(stepRef, suffix string) (string, bool) {
