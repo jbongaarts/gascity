@@ -129,8 +129,31 @@ func newWorkflowServeCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 type hookBead struct {
-	ID       string            `json:"id"`
-	Metadata map[string]string `json:"metadata"`
+	ID       string           `json:"id"`
+	Metadata hookBeadMetadata `json:"metadata"`
+}
+
+// hookBeadMetadata handles metadata where values may be JSON strings,
+// numbers, or booleans (bd writes numbers for numeric-looking values).
+// Normalizes everything to strings on unmarshal.
+type hookBeadMetadata map[string]string
+
+func (m *hookBeadMetadata) UnmarshalJSON(data []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*m = make(hookBeadMetadata, len(raw))
+	for k, v := range raw {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			(*m)[k] = s
+		} else {
+			// Non-string (number, bool): use raw JSON text without quotes.
+			(*m)[k] = strings.Trim(string(v), " ")
+		}
+	}
+	return nil
 }
 
 func workflowTracef(format string, args ...any) {

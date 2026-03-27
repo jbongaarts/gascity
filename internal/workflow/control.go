@@ -312,6 +312,20 @@ func buildAttemptRecipe(step *formula.Step, control beads.Bead, attemptNum int) 
 	// Children may have retry/ralph config — propagate their metadata
 	// so the beads get the correct gc.kind for logical grouping.
 	if len(step.Children) > 0 {
+		// Collect top-level child IDs so the scope bead blocks on them.
+		var topChildIDs []string
+		for _, child := range step.Children {
+			topChildIDs = append(topChildIDs, attemptPrefix+"."+child.ID)
+		}
+		// Wire scope → children: scope closes when all children close.
+		for _, cid := range topChildIDs {
+			recipe.Deps = append(recipe.Deps, formula.RecipeDep{
+				StepID:      attemptPrefix,
+				DependsOnID: cid,
+				Type:        "blocks",
+			})
+		}
+
 		for _, child := range step.Children {
 			childID := attemptPrefix + "." + child.ID
 			childMeta := map[string]string{
@@ -370,11 +384,10 @@ func buildAttemptRecipe(step *formula.Step, control beads.Bead, attemptNum int) 
 				childStep.Type = "task"
 			}
 			recipe.Steps = append(recipe.Steps, childStep)
-			recipe.Deps = append(recipe.Deps, formula.RecipeDep{
-				StepID:      childID,
-				DependsOnID: attemptPrefix,
-				Type:        "parent-child",
-			})
+			// No parent-child dep to the iteration scope — it creates a
+			// deadlock (scope waits for children, children wait for scope).
+			// Children are associated with the iteration via gc.scope_ref
+			// metadata, and their execution order comes from blocks deps.
 
 			// Wire inter-child deps.
 			for _, need := range child.Needs {

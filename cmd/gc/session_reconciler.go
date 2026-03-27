@@ -256,8 +256,9 @@ func reconcileSessionBeads(
 		}
 
 		// Drain-ack: agent signaled it's done (gc runtime drain-ack).
-		// Stop the session immediately so the pool can reclaim the slot
-		// and a fresh session handles the next work item.
+		// Stop the session and close its bead. The bead becomes a permanent
+		// historical record of this incarnation. The next work item gets a
+		// brand-new session bead with a fresh session key and clean context.
 		if alive && dops != nil {
 			if acked, _ := dops.isDrainAcked(name); acked {
 				_ = dops.clearDrain(name)
@@ -271,6 +272,11 @@ func reconcileSessionBeads(
 						Subject: tp.DisplayName(),
 						Message: "drain acknowledged by agent",
 					})
+				}
+				// Close the session bead so the next start creates a fresh one.
+				if store != nil && session.ID != "" {
+					_ = store.SetMetadata(session.ID, "state", "drained")
+					_ = store.Close(session.ID)
 				}
 				continue
 			}

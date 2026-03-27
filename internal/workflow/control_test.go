@@ -695,17 +695,13 @@ func TestBuildAttemptRecipeRalphWithChildren(t *testing.T) {
 		t.Errorf("missing dep: verify blocks on apply; deps = %+v", recipe.Deps)
 	}
 
-	// Children should have parent-child deps to the scope root.
-	foundParentChild := false
+	// Children should NOT have parent-child deps to the scope root —
+	// parent-child creates a deadlock (scope waits for children, children
+	// wait for scope). Containment is expressed via gc.scope_ref metadata.
 	for _, dep := range recipe.Deps {
-		if dep.StepID == "mol-test.converge.iteration.3.apply" &&
-			dep.DependsOnID == "mol-test.converge.iteration.3" &&
-			dep.Type == "parent-child" {
-			foundParentChild = true
+		if dep.Type == "parent-child" {
+			t.Errorf("unexpected parent-child dep: %s -> %s (causes deadlock)", dep.StepID, dep.DependsOnID)
 		}
-	}
-	if !foundParentChild {
-		t.Errorf("missing parent-child dep: apply -> scope root; deps = %+v", recipe.Deps)
 	}
 }
 
@@ -844,6 +840,237 @@ func mustDep(t *testing.T, store beads.Store, from, to, depType string) {
 	t.Helper()
 	if err := store.DepAdd(from, to, depType); err != nil {
 		t.Fatalf("dep %s -> %s: %v", from, to, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Regression: scope bead must block on children (not parent-child deadlock)
+// ---------------------------------------------------------------------------
+
+func TestBuildAttemptRecipeScopeBlocksOnAllChildren(t *testing.T) {
+	t.Parallel()
+
+	// The scope bead must have blocks deps on ALL top-level children.
+	// Without this, the scope stays open forever (nothing closes it).
+	step := &formula.Step{
+		ID:    "review-loop",
+		Title: "Review loop",
+		Ralph: &formula.RalphSpec{MaxAttempts: 5},
+		Children: []*formula.Step{
+			{ID: "review-claude", Title: "Claude"},
+			{ID: "review-codex", Title: "Codex"},
+			{ID: "synthesize", Title: "Synthesize", Needs: []string{"review-claude", "review-codex"}},
+			{ID: "apply-fixes", Title: "Apply fixes", Needs: []string{"synthesize"}},
+		},
+	}
+
+	control := beads.Bead{
+		ID: "ctrl-1",
+		Metadata: map[string]string{
+			"gc.step_id":  "review-loop",
+			"gc.step_ref": "mol.review-loop",
+		},
+	}
+
+	recipe := buildAttemptRecipe(step, control, 1)
+	scopeID := "mol.review-loop.iteration.1"
+
+	// Scope must block on each child.
+	expectedBlockers := []string{
+		scopeID + ".review-claude",
+		scopeID + ".review-codex",
+		scopeID + ".synthesize",
+		scopeID + ".apply-fixes",
+	}
+
+	scopeDeps := map[string]bool{}
+	for _, dep := range recipe.Deps {
+		if dep.StepID == scopeID && dep.Type == "blocks" {
+			scopeDeps[dep.DependsOnID] = true
+		}
+	}
+
+	for _, expected := range expectedBlockers {
+		if !scopeDeps[expected] {
+			t.Errorf("scope %q missing blocks dep on %q; scope deps = %v", scopeID, expected, scopeDeps)
+		}
+	}
+}
+
+func TestBuildAttemptRecipeNoParentChildDeps(t *testing.T) {
+	t.Parallel()
+
+	// Regression: parent-child deps from children→scope create a deadlock
+	// because scope waits for children (blocks) and children wait for
+	// scope (parent-child). Only blocks deps should exist.
+	step := &formula.Step{
+		ID:    "loop",
+		Title: "Loop",
+		Ralph: &formula.RalphSpec{MaxAttempts: 3},
+		Children: []*formula.Step{
+			{ID: "work", Title: "Work"},
+			{ID: "check", Title: "Check", Needs: []string{"work"}},
+		},
+	}
+
+	control := beads.Bead{
+		ID:       "ctrl-2",
+		Metadata: map[string]string{"gc.step_id": "loop", "gc.step_ref": "mol.loop"},
+	}
+
+	recipe := buildAttemptRecipe(step, control, 1)
+
+	for _, dep := range recipe.Deps {
+		if dep.Type == "parent-child" {
+			t.Errorf("parent-child dep found: %s → %s (causes deadlock)", dep.StepID, dep.DependsOnID)
+		}
+	}
+}
+
+func TestBuildAttemptRecipeComposeExpandFanout(t *testing.T) {
+	t.Parallel()
+
+	// Real-world case: compose.expand produces multi-segment child IDs
+	// like "review-pipeline.review-claude". These children also have retry.
+	// Verify: scope blocks on children, no parent-child, inter-child deps correct.
+	step := &formula.Step{
+		ID:    "review-loop",
+		Title: "Review loop",
+		Ralph: &formula.RalphSpec{MaxAttempts: 999},
+		Children: []*formula.Step{
+			{
+				ID:    "review-pipeline.review-claude",
+				Title: "Claude review",
+				Retry: &formula.RetrySpec{MaxAttempts: 3, OnExhausted: "hard_fail"},
+			},
+			{
+				ID:    "review-pipeline.review-codex",
+				Title: "Codex review",
+				Retry: &formula.RetrySpec{MaxAttempts: 3, OnExhausted: "hard_fail"},
+			},
+			{
+				ID:    "review-pipeline.synthesize",
+				Title: "Synthesize",
+				Needs: []string{"review-pipeline.review-claude", "review-pipeline.review-codex"},
+				Retry: &formula.RetrySpec{MaxAttempts: 3, OnExhausted: "hard_fail"},
+			},
+			{
+				ID:    "apply-fixes",
+				Title: "Apply fixes",
+				Needs: []string{"review-pipeline.synthesize"},
+				Retry: &formula.RetrySpec{MaxAttempts: 3, OnExhausted: "hard_fail"},
+			},
+		},
+	}
+
+	control := beads.Bead{
+		ID: "ctrl-3",
+		Metadata: map[string]string{
+			"gc.step_id":  "review-loop",
+			"gc.step_ref": "mol-adopt-pr-v2.review-loop",
+		},
+	}
+
+	recipe := buildAttemptRecipe(step, control, 1)
+	scopeID := "mol-adopt-pr-v2.review-loop.iteration.1"
+
+	// No parent-child deps.
+	for _, dep := range recipe.Deps {
+		if dep.Type == "parent-child" {
+			t.Errorf("parent-child dep: %s → %s", dep.StepID, dep.DependsOnID)
+		}
+	}
+
+	// Scope blocks on all 4 children.
+	scopeBlockers := map[string]bool{}
+	for _, dep := range recipe.Deps {
+		if dep.StepID == scopeID && dep.Type == "blocks" {
+			scopeBlockers[dep.DependsOnID] = true
+		}
+	}
+	for _, childID := range []string{
+		scopeID + ".review-pipeline.review-claude",
+		scopeID + ".review-pipeline.review-codex",
+		scopeID + ".review-pipeline.synthesize",
+		scopeID + ".apply-fixes",
+	} {
+		if !scopeBlockers[childID] {
+			t.Errorf("scope missing blocks dep on %q", childID)
+		}
+	}
+
+	// Synthesize blocks on both reviewers.
+	synthID := scopeID + ".review-pipeline.synthesize"
+	synthBlockers := map[string]bool{}
+	for _, dep := range recipe.Deps {
+		if dep.StepID == synthID && dep.Type == "blocks" {
+			synthBlockers[dep.DependsOnID] = true
+		}
+	}
+	if !synthBlockers[scopeID+".review-pipeline.review-claude"] {
+		t.Errorf("synthesize missing dep on review-claude")
+	}
+	if !synthBlockers[scopeID+".review-pipeline.review-codex"] {
+		t.Errorf("synthesize missing dep on review-codex")
+	}
+
+	// Apply-fixes blocks on synthesize.
+	applyID := scopeID + ".apply-fixes"
+	foundApplyDep := false
+	for _, dep := range recipe.Deps {
+		if dep.StepID == applyID && dep.DependsOnID == synthID && dep.Type == "blocks" {
+			foundApplyDep = true
+		}
+	}
+	if !foundApplyDep {
+		t.Errorf("apply-fixes missing blocks dep on synthesize")
+	}
+
+	// Children with retry should have gc.kind=retry in metadata.
+	for _, s := range recipe.Steps {
+		if s.ID == scopeID+".review-pipeline.review-claude" {
+			if s.Metadata["gc.kind"] != "retry" {
+				t.Errorf("review-claude gc.kind = %q, want retry", s.Metadata["gc.kind"])
+			}
+			if s.Metadata["gc.source_step_spec"] == "" {
+				t.Error("review-claude missing frozen step spec")
+			}
+		}
+	}
+}
+
+func TestBuildAttemptRecipeScopeMetadataAndStepRef(t *testing.T) {
+	t.Parallel()
+
+	// Verify scope bead has correct metadata for ralph iterations.
+	step := &formula.Step{
+		ID:    "loop",
+		Title: "Loop",
+		Ralph: &formula.RalphSpec{MaxAttempts: 3},
+		Children: []*formula.Step{
+			{ID: "work", Title: "Work"},
+		},
+	}
+
+	control := beads.Bead{
+		ID:       "ctrl-4",
+		Metadata: map[string]string{"gc.step_id": "loop", "gc.step_ref": "mol.loop"},
+	}
+
+	recipe := buildAttemptRecipe(step, control, 2)
+	scope := recipe.Steps[0]
+
+	if scope.Metadata["gc.kind"] != "scope" {
+		t.Errorf("scope gc.kind = %q, want scope", scope.Metadata["gc.kind"])
+	}
+	if scope.Metadata["gc.scope_role"] != "body" {
+		t.Errorf("scope gc.scope_role = %q, want body", scope.Metadata["gc.scope_role"])
+	}
+	if scope.Metadata["gc.attempt"] != "2" {
+		t.Errorf("scope gc.attempt = %q, want 2", scope.Metadata["gc.attempt"])
+	}
+	if scope.Metadata["gc.step_ref"] != "mol.loop.iteration.2" {
+		t.Errorf("scope gc.step_ref = %q, want mol.loop.iteration.2", scope.Metadata["gc.step_ref"])
 	}
 }
 

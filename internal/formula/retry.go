@@ -88,9 +88,11 @@ func expandRetry(step *Step) ([]*Step, error) {
 	run.OnComplete = nil
 	run.Children = nil
 	run.Metadata = withMetadata(run.Metadata, map[string]string{
-		"gc.attempt":  strconv.Itoa(attempt),
-		"gc.step_id":  step.ID,
-		"gc.step_ref": attemptID,
+		"gc.attempt": strconv.Itoa(attempt),
+		"gc.step_id": step.ID,
+		// gc.step_ref is NOT set here — molecule.Instantiate fills it from
+		// step.ID which includes the formula prefix (e.g., "mol.finalize.attempt.1"
+		// instead of the bare "finalize.attempt.1").
 	})
 	if kind := step.Metadata["gc.kind"]; kind != "" {
 		run.Metadata["gc.original_kind"] = kind

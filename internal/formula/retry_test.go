@@ -112,6 +112,14 @@ func TestApplyRetriesBasic(t *testing.T) {
 	if attempt.Metadata["gc.kind"] == "retry-run" {
 		t.Fatal("attempt should not have gc.kind=retry-run (v1 pattern)")
 	}
+	// Attempt must NOT set gc.step_ref at compile time — molecule.Instantiate
+	// fills it from step.ID which includes the formula prefix. Setting it here
+	// produces short refs (e.g., "review.attempt.1" instead of "mol.review.attempt.1")
+	// that break logical grouping in the presentation layer.
+	if attempt.Metadata["gc.step_ref"] != "" {
+		t.Fatalf("attempt gc.step_ref = %q, want empty (molecule.Instantiate fills it)",
+			attempt.Metadata["gc.step_ref"])
+	}
 }
 
 func TestCompileRetryManagedStepBlocksWorkflowOnLogicalBead(t *testing.T) {
