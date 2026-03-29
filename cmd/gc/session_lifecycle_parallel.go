@@ -182,7 +182,7 @@ func dependencyTemplateAlive(
 	if cfgAgent == nil {
 		return false
 	}
-	if cfgAgent.Pool != nil {
+	if isMultiSessionCfgAgent(cfgAgent) {
 		for name, tp := range desiredState {
 			if tp.TemplateName != template {
 				continue

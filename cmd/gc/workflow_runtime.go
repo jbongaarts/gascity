@@ -52,7 +52,7 @@ func workflowControlBinding(store beads.Store, cityName string, cfg *config.City
 		return graphRouteBinding{}, fmt.Errorf("workflow-control agent %q not found", config.WorkflowControlAgentName)
 	}
 	binding := graphRouteBinding{qualifiedName: agentCfg.QualifiedName()}
-	if agentCfg.IsPool() {
+	if isMultiSessionCfgAgent(&agentCfg) {
 		return binding, nil
 	}
 	sn := lookupSessionNameOrLegacy(store, cityName, agentCfg.QualifiedName(), cfg.Workspace.SessionTemplate)

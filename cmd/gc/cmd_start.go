@@ -87,12 +87,12 @@ func computePoolSessions(cfg *config.City, cityName, cityPath string, sp runtime
 	ps := make(map[string]time.Duration)
 	st := cfg.Workspace.SessionTemplate
 	for _, a := range cfg.Agents {
-		pool := a.EffectivePool()
-		if !a.IsPool() || !pool.IsMultiInstance() {
+		sp0 := scaleParamsFor(&a)
+		if sp0.Max == 1 {
 			continue
 		}
-		timeout := pool.DrainTimeoutDuration()
-		for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, pool, cityName, st, sp) {
+		timeout := a.DrainTimeoutDuration()
+		for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, sp0, &a, cityName, st, sp) {
 			ps[startupSessionName(cityName, qualifiedInstance, st)] = timeout
 		}
 	}
@@ -112,16 +112,13 @@ func computePoolDeathHandlers(cfg *config.City, cityName, cityPath string, sp ru
 	handlers := make(map[string]poolDeathInfo)
 	st := cfg.Workspace.SessionTemplate
 	for _, a := range cfg.Agents {
-		if !a.IsPool() {
+		sp0 := scaleParamsFor(&a)
+		if sp0.Max == 1 {
 			continue
 		}
-		pool := a.EffectivePool()
-		if !pool.IsMultiInstance() {
-			continue
-		}
-		for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, pool, cityName, st, sp) {
+		for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, sp0, &a, cityName, st, sp) {
 			_, instanceName := config.ParseQualifiedName(qualifiedInstance)
-			instance := config.Agent{Name: instanceName, Dir: a.Dir, Pool: a.Pool, PoolName: a.QualifiedName()}
+			instance := config.Agent{Name: instanceName, Dir: a.Dir, PoolName: a.QualifiedName()}
 			cmd := instance.EffectiveOnDeath()
 			if cmd == "" {
 				continue
@@ -168,10 +165,10 @@ func buildIdleTracker(cfg *config.City, cityName, cityPath string, sp runtime.Pr
 		if timeout <= 0 {
 			continue
 		}
-		pool := a.EffectivePool()
-		if a.IsPool() && pool.IsMultiInstance() {
+		sp0 := scaleParamsFor(&a)
+		if sp0.Max != 1 {
 			// Register each pool instance (worker-1, worker-2, ...).
-			for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, pool, cityName, st, sp) {
+			for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, sp0, &a, cityName, st, sp) {
 				sn := startupSessionName(cityName, qualifiedInstance, st)
 				it.setTimeout(sn, timeout)
 			}
@@ -925,10 +922,11 @@ func checkAgentImages(sp runtime.Provider, agents []config.Agent, _ io.Writer) e
 // Uses ListRunning with the city prefix for a single batch call instead
 // of N individual IsRunning calls. For exec providers (K8s), this reduces
 // N subprocess spawns to 1.
-func countRunningPoolInstances(agentName, agentDir string, pool config.PoolConfig, cityName, sessionTemplate string, sp runtime.Provider) int { //nolint:unparam // agentName varies in production use
-	if pool.IsUnlimited() {
+func countRunningPoolInstances(agentName, agentDir string, sp0 scaleParams, a *config.Agent, cityName, sessionTemplate string, sp runtime.Provider) int { //nolint:unparam // agentName varies in production use
+	isUnlimited := sp0.Max < 0
+	if isUnlimited {
 		// Unlimited: count by prefix matching.
-		instances := discoverPoolInstances(agentName, agentDir, pool, cityName, sessionTemplate, sp)
+		instances := discoverPoolInstances(agentName, agentDir, sp0, a, cityName, sessionTemplate, sp)
 		count := 0
 		for _, qn := range instances {
 			sn := sessionName(nil, cityName, qn, sessionTemplate)
@@ -940,9 +938,9 @@ func countRunningPoolInstances(agentName, agentDir string, pool config.PoolConfi
 	}
 
 	// Bounded: build the set of expected pool instance session names.
-	expected := make(map[string]bool, pool.Max)
-	for i := 1; i <= pool.Max; i++ {
-		instanceName := poolInstanceName(agentName, i, pool)
+	expected := make(map[string]bool, sp0.Max)
+	for i := 1; i <= sp0.Max; i++ {
+		instanceName := poolInstanceName(agentName, i, a)
 		qualifiedInstance := instanceName
 		if agentDir != "" {
 			qualifiedInstance = agentDir + "/" + instanceName
@@ -977,11 +975,12 @@ func countRunningPoolInstances(agentName, agentDir string, pool config.PoolConfi
 // from its config. Returns nil if no extra fields are present.
 func buildFingerprintExtra(a *config.Agent) map[string]string {
 	m := make(map[string]string)
-	if a.Pool != nil {
-		m["pool.min"] = strconv.Itoa(a.Pool.Min)
-		m["pool.max"] = strconv.Itoa(a.Pool.Max)
-		if a.Pool.Check != "" {
-			m["pool.check"] = a.Pool.Check
+	if isMultiSessionCfgAgent(a) {
+		sp := scaleParamsFor(a)
+		m["pool.min"] = strconv.Itoa(sp.Min)
+		m["pool.max"] = strconv.Itoa(sp.Max)
+		if sp.Check != "" {
+			m["pool.check"] = sp.Check
 		}
 	}
 	if len(a.DependsOn) > 0 {

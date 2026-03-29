@@ -880,14 +880,11 @@ func TestStartupSessionComputationsDoNotQueryBeadStore(t *testing.T) {
 	cfg := config.DefaultCity("bright-lights")
 	cfg.Agents = []config.Agent{
 		{
-			Name:        "worker",
-			Dir:         "gascity",
-			Suspended:   true,
-			IdleTimeout: "5m",
-			Pool: &config.PoolConfig{
-				Min: 0,
-				Max: 2,
-			},
+			Name:              "worker",
+			Dir:               "gascity",
+			Suspended:         true,
+			IdleTimeout:       "5m",
+			MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2),
 		},
 		{
 			Name:        "solo",

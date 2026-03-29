@@ -392,3 +392,5 @@ func (f *fakeMutatorState) DeleteProviderPatch(name string) error {
 	}
 	return fmt.Errorf("provider patch %q not found", name)
 }
+
+func intPtr(n int) *int { return &n }

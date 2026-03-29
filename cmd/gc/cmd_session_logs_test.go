@@ -447,7 +447,7 @@ func TestResolveConfiguredSessionLogContext_RejectsNonExactOrPoolTargets(t *test
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "gastown"},
 		Agents: []config.Agent{
-			{Name: "dog", Pool: &config.PoolConfig{Min: 1, Max: 2}},
+			{Name: "dog", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(2)},
 			{Name: "worker", Dir: "demo"},
 		},
 	}

@@ -79,9 +79,15 @@ Agent defines a configured agent in the city.
 | `process_names` | []string |  |  | ProcessNames lists process names to look for when checking if the agent is running. |
 | `emits_permission_warning` | boolean |  |  | EmitsPermissionWarning indicates whether the agent emits permission prompts that should be suppressed. |
 | `env` | map[string]string |  |  | Env sets additional environment variables for the agent process. |
-| `pool` | PoolConfig |  |  | Pool configures elastic pool behavior. When set, the agent becomes a pool. |
-| `work_query` | string |  |  | WorkQuery is the shell command to find available work for this agent. Used by gc hook and available in prompt templates as &#123;&#123;.WorkQuery&#125;&#125;. Default for fixed agents: "bd ready --assignee=&lt;qualified-name&gt;". Default for pool agents: "bd ready --metadata-field gc.routed_to=&lt;qualified-name&gt; --unassigned --limit=1". Override to integrate with external task systems. |
-| `sling_query` | string |  |  | SlingQuery is the command template to route a bead to this agent/pool. Used by gc sling to make a bead visible to the target's work_query. The placeholder &#123;&#125; is replaced with the bead ID at runtime. Default for fixed agents: "bd update &#123;&#125; --assignee=&lt;qualified-name&gt;". Default for pool agents: "bd update &#123;&#125; --set-metadata gc.routed_to=&lt;qualified-name&gt;". Pool agents must set both sling_query and work_query, or neither. |
+| `max_active_sessions` | integer |  |  | MaxActiveSessions is the agent-level cap on concurrent sessions. Nil means inherit from rig, then workspace, then unlimited. Replaces pool.max. |
+| `min_active_sessions` | integer |  |  | MinActiveSessions is the minimum number of sessions to keep alive. Agent-level only. Counts against rig/workspace caps. Replaces pool.min. |
+| `scale_check` | string |  |  | ScaleCheck is a shell command whose output determines desired session count. Optional override — when set, its output is the desired count (still clamped by all cap levels). |
+| `drain_timeout` | string |  | `5m` | DrainTimeout is the maximum time to wait for a session to finish its current work before force-killing it during scale-down. Duration string (e.g., "5m", "30m", "1h"). Defaults to "5m". |
+| `on_boot` | string |  |  | OnBoot is a shell command run once at controller startup for this agent. |
+| `on_death` | string |  |  | OnDeath is a shell command run when a session dies unexpectedly. |
+| `namepool` | string |  |  | Namepool is the path to a plain text file with one name per line. When set, sessions use names from the file as display aliases. |
+| `work_query` | string |  |  | WorkQuery is the shell command to find available work for this agent. Used by gc hook and available in prompt templates as &#123;&#123;.WorkQuery&#125;&#125;. Default for fixed agents: "bd ready --assignee=&lt;qualified-name&gt;". Default for pool agents: "bd ready --metadata-field gc.routed_to=&lt;qualified-name&gt; --unassigned --json --limit=1 2&gt;/dev/null". Override to integrate with external task systems. |
+| `sling_query` | string |  |  | SlingQuery is the command template to route a bead to this agent/pool. Used by gc sling to make a bead visible to the target's work_query. The placeholder &#123;&#125; is replaced with the bead ID at runtime. Default for fixed agents: "bd update &#123;&#125; --assignee=&lt;qualified-name&gt;". Default for pool agents: "bd update &#123;&#125; --add-label=pool:&lt;qualified-name&gt;". Pool agents must set both sling_query and work_query, or neither. |
 | `idle_timeout` | string |  |  | IdleTimeout is the maximum time an agent session can be inactive before the controller kills and restarts it. Duration string (e.g., "15m", "1h"). Empty (default) disables idle checking. |
 | `sleep_after_idle` | string |  |  | SleepAfterIdle overrides idle sleep policy for this agent. Accepts a duration string (e.g., "30s") or "off". |
 | `install_agent_hooks` | []string |  |  | InstallAgentHooks overrides workspace-level install_agent_hooks for this agent. When set, replaces (not adds to) the workspace default. |
@@ -351,20 +357,6 @@ Patches holds all patch blocks from composition.
 | `agent` | []AgentPatch |  |  | Agents targets agents by (dir, name). |
 | `rigs` | []RigPatch |  |  | Rigs targets rigs by name. |
 | `providers` | []ProviderPatch |  |  | Providers targets providers by name. |
-
-## PoolConfig
-
-PoolConfig defines elastic pool parameters for an agent.
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `min` | integer |  | `0` | Min is the minimum number of pool instances. Defaults to 0. |
-| `max` | integer |  | `0` | Max is the maximum number of pool instances. 0 means the pool is disabled (no instances will be created). -1 means unlimited (the check command's output determines scale with no upper cap). Defaults to 0. |
-| `check` | string |  | `echo 1` | Check is a shell command whose output determines desired pool size. Defaults to "echo 1". |
-| `drain_timeout` | string |  | `5m` | DrainTimeout is the maximum time to wait for a pool instance to finish its current work before force-killing it. Duration string (e.g., "5m", "30m", "1h"). Defaults to "5m". |
-| `on_death` | string |  |  | OnDeath is a shell command run when a pool instance dies. Default: unclaims in_progress beads assigned to the dead instance. |
-| `on_boot` | string |  |  | OnBoot is a shell command run once at controller startup for each pool. Default: unclaims all in_progress beads labeled for this pool. |
-| `namepool` | string |  |  | Namepool is the path to a plain text file with one name per line. When set, pool instances use names from the file instead of numeric suffixes (e.g., "furiosa" instead of "polecat-1"). The path is resolved via adjustFragmentPath (relative to pack dir, absolute, or "//" for city-root-relative). Requires a bounded pool (max &gt; 0). |
 
 ## PoolOverride
 

@@ -223,7 +223,7 @@ func TestAdoptionBarrier_PoolSlotDetection(t *testing.T) {
 	sp := &fakeAdoptionProvider{running: []string{"worker-3"}}
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Pool: &config.PoolConfig{Min: 1, Max: 5}},
+			{Name: "worker", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5)},
 		},
 	}
 	var stderr bytes.Buffer
@@ -250,7 +250,7 @@ func TestAdoptionBarrier_PoolOutOfBounds(t *testing.T) {
 	sp := &fakeAdoptionProvider{running: []string{"worker-7"}}
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Pool: &config.PoolConfig{Min: 1, Max: 5}},
+			{Name: "worker", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5)},
 		},
 	}
 	var stderr bytes.Buffer

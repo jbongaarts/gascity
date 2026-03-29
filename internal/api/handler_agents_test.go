@@ -41,9 +41,9 @@ func TestAgentListPoolExpansion(t *testing.T) {
 	state := newFakeState(t)
 	state.cfg.Agents = []config.Agent{
 		{
-			Name: "polecat",
-			Dir:  "myrig",
-			Pool: &config.PoolConfig{Min: 1, Max: 3, Check: "echo 3"},
+			Name:              "polecat",
+			Dir:               "myrig",
+			MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(3), ScaleCheck: "echo 3",
 		},
 	}
 	srv := New(state)
@@ -84,9 +84,9 @@ func TestAgentListUnlimitedPoolDiscovery(t *testing.T) {
 	state := newFakeState(t)
 	state.cfg.Agents = []config.Agent{
 		{
-			Name: "polecat",
-			Dir:  "myrig",
-			Pool: &config.PoolConfig{Min: 0, Max: -1},
+			Name:              "polecat",
+			Dir:               "myrig",
+			MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(-1),
 		},
 	}
 	// Start 2 running sessions matching the pool pattern.
@@ -129,9 +129,9 @@ func TestFindAgentUnlimitedPoolMember(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "polecat",
-				Dir:  "myrig",
-				Pool: &config.PoolConfig{Min: 0, Max: -1},
+				Name:              "polecat",
+				Dir:               "myrig",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(-1),
 			},
 		},
 	}
@@ -276,9 +276,9 @@ func TestFindAgentPoolMaxZero(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "polecat",
-				Dir:  "myrig",
-				Pool: &config.PoolConfig{Min: 0, Max: 0, Check: "echo 0"},
+				Name:              "polecat",
+				Dir:               "myrig",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(0), ScaleCheck: "echo 0",
 			},
 		},
 	}

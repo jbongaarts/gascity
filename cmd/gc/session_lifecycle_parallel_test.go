@@ -480,7 +480,7 @@ func TestPrepareStartCandidate_UsesLogicalTemplateForTaskWorkDir(t *testing.T) {
 		order: 0,
 	}, &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Dir: "frontend", Pool: &config.PoolConfig{Min: 1, Max: 2}},
+			{Name: "worker", Dir: "frontend", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(2)},
 		},
 	}, store, &clock.Fake{Time: time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)})
 	if err != nil {
@@ -857,7 +857,7 @@ func TestStopSessionsBounded_UsesLegacyAgentLabelTemplateForOrdering(t *testing.
 	cfg := &config.City{
 		Workspace: config.Workspace{SessionTemplate: "{{.Agent}}"},
 		Agents: []config.Agent{
-			{Name: "worker", Dir: "frontend", DependsOn: []string{"frontend/db"}, Pool: &config.PoolConfig{Min: 1, Max: 2}},
+			{Name: "worker", Dir: "frontend", DependsOn: []string{"frontend/db"}, MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(2)},
 			{Name: "db", Dir: "frontend"},
 		},
 	}
@@ -1006,7 +1006,7 @@ func TestGracefulStopAll_ReconstructsPoolSubjectFromLegacyBead(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := events.NewFake()
-	cfg := &config.City{Agents: []config.Agent{{Name: "worker", Dir: "frontend", Pool: &config.PoolConfig{Min: 1, Max: 3}}}}
+	cfg := &config.City{Agents: []config.Agent{{Name: "worker", Dir: "frontend", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(3)}}}
 	var stdout, stderr bytes.Buffer
 
 	gracefulStopAll([]string{"custom-worker-2"}, sp, 50*time.Millisecond, rec, cfg, store, &stdout, &stderr)
@@ -1038,7 +1038,7 @@ func TestGracefulStopAll_UsesLegacyAgentLabelForPoolSubject(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := events.NewFake()
-	cfg := &config.City{Agents: []config.Agent{{Name: "worker", Dir: "frontend", Pool: &config.PoolConfig{Min: 1, Max: 5}}}}
+	cfg := &config.City{Agents: []config.Agent{{Name: "worker", Dir: "frontend", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5)}}}
 	var stdout, stderr bytes.Buffer
 
 	gracefulStopAll([]string{"custom-worker-4"}, sp, 50*time.Millisecond, rec, cfg, store, &stdout, &stderr)
@@ -1521,7 +1521,7 @@ func TestCandidateWaveOrder_UsesLegacyAgentLabelTemplate(t *testing.T) {
 	cfg := &config.City{
 		Workspace: config.Workspace{SessionTemplate: "{{.Agent}}"},
 		Agents: []config.Agent{
-			{Name: "worker", Dir: "frontend", DependsOn: []string{"frontend/db"}, Pool: &config.PoolConfig{Min: 1, Max: 2}},
+			{Name: "worker", Dir: "frontend", DependsOn: []string{"frontend/db"}, MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(2)},
 			{Name: "db", Dir: "frontend"},
 		},
 	}

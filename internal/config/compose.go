@@ -557,21 +557,21 @@ func adjustAgentPaths(agents []Agent, fragDir, cityRoot string) {
 			agents[i].OverlayDir = adjustFragmentPath(
 				agents[i].OverlayDir, fragDir, cityRoot)
 		}
-		if agents[i].Pool != nil && agents[i].Pool.Namepool != "" {
-			agents[i].Pool.Namepool = adjustFragmentPath(
-				agents[i].Pool.Namepool, fragDir, cityRoot)
+		if agents[i].Namepool != "" {
+			agents[i].Namepool = adjustFragmentPath(
+				agents[i].Namepool, fragDir, cityRoot)
 		}
 	}
 }
 
-// loadNamepools loads namepool files for all pool agents with a configured
+// loadNamepools loads namepool files for all agents with a configured
 // namepool path. Called after all path adjustment and composition is complete.
 func loadNamepools(fs fsys.FS, cfg *City, cityRoot string) {
 	for i := range cfg.Agents {
-		if cfg.Agents[i].Pool == nil || cfg.Agents[i].Pool.Namepool == "" {
+		if cfg.Agents[i].Namepool == "" {
 			continue
 		}
-		path := cfg.Agents[i].Pool.Namepool
+		path := cfg.Agents[i].Namepool
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(cityRoot, path)
 		}
@@ -579,7 +579,7 @@ func loadNamepools(fs fsys.FS, cfg *City, cityRoot string) {
 		if err != nil {
 			continue // silent fallback to numeric names
 		}
-		cfg.Agents[i].Pool.NamepoolNames = names
+		cfg.Agents[i].NamepoolNames = names
 	}
 }
 

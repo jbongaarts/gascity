@@ -175,9 +175,9 @@ func TestSlingPoolTargetDelegatesToGcSling(t *testing.T) {
 	state := newFakeMutatorState(t)
 	state.cfg.Agents = []config.Agent{
 		{
-			Name: "polecat",
-			Dir:  "myrig",
-			Pool: &config.PoolConfig{Min: 0, Max: 3},
+			Name:              "polecat",
+			Dir:               "myrig",
+			MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3),
 		},
 	}
 	srv := New(state)
@@ -213,9 +213,9 @@ func TestSlingFormulaParsesWispRootOutput(t *testing.T) {
 	state := newFakeMutatorState(t)
 	state.cfg.Agents = []config.Agent{
 		{
-			Name: "polecat",
-			Dir:  "myrig",
-			Pool: &config.PoolConfig{Min: 0, Max: 3},
+			Name:              "polecat",
+			Dir:               "myrig",
+			MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3),
 		},
 	}
 	srv := New(state)

@@ -34,7 +34,6 @@ func poolAgent(name, dir string, max *int, min int) config.Agent {
 		Dir:               dir,
 		MaxActiveSessions: max,
 		MinActiveSessions: minPtr,
-		Pool:              &config.PoolConfig{Min: min, Max: -1}, // mark as pool
 	}
 }
 
@@ -323,7 +322,7 @@ func TestComputePoolDesiredStates_ResumePriorityOrder(t *testing.T) {
 func TestComputePoolDesiredStates_SuspendedAgentSkipped(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "claude", Suspended: true, Pool: &config.PoolConfig{Max: -1}},
+			{Name: "claude", Suspended: true, MaxActiveSessions: intPtr(-1)},
 		},
 	}
 	scaleCheck := map[string]int{"claude": 1}

@@ -145,7 +145,7 @@ func TestDecorateDynamicFragmentRecipePreservesPoolFallbackAndScopeMetadata(t *t
 		Workspace: config.Workspace{Name: "test-city"},
 		Daemon:    config.DaemonConfig{GraphWorkflows: true},
 		Agents: []config.Agent{
-			{Name: "reviewer", Dir: "frontend", Pool: &config.PoolConfig{Min: 1, Max: 3}},
+			{Name: "reviewer", Dir: "frontend", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(3)},
 		},
 	}
 	config.InjectImplicitAgents(cfg)
@@ -588,7 +588,7 @@ func TestRunWorkflowServeFollowUsesSweepFallback(t *testing.T) {
 		return os.ErrDeadlineExceeded
 	}
 
-	wfcAgent := config.Agent{Name: "workflow-control", Pool: &config.PoolConfig{Min: 1, Max: 1}}
+	wfcAgent := config.Agent{Name: "workflow-control", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(1)}
 	err := runWorkflowServeFollow(
 		wfcAgent,
 		t.TempDir(),

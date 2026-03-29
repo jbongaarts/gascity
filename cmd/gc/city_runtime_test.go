@@ -46,7 +46,7 @@ func TestSweepUndesiredPoolSessionBeads_KeepsRunningSessionsOpen(t *testing.T) {
 		sessionBeads,
 		nil,
 		nil,
-		&config.City{Agents: []config.Agent{{Name: "worker", Pool: &config.PoolConfig{Min: 0, Max: 2}}}},
+		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		sp,
 	)
 	if closed != 0 {
@@ -88,7 +88,7 @@ func TestSweepUndesiredPoolSessionBeads_ClosesStoppedSessions(t *testing.T) {
 		sessionBeads,
 		nil,
 		nil,
-		&config.City{Agents: []config.Agent{{Name: "worker", Pool: &config.PoolConfig{Min: 0, Max: 2}}}},
+		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
 		runtime.NewFake(),
 	)
 	if closed != 1 {

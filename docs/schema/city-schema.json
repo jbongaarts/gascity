@@ -162,11 +162,24 @@
         },
         "scale_check": {
           "type": "string",
-          "description": "ScaleCheck is a shell command whose output determines desired session count.\nOptional override — when set, its output is the desired count (still clamped\nby all cap levels). Replaces pool.check."
+          "description": "ScaleCheck is a shell command whose output determines desired session count.\nOptional override — when set, its output is the desired count (still clamped\nby all cap levels)."
         },
-        "pool": {
-          "$ref": "#/$defs/PoolConfig",
-          "description": "Pool configures elastic pool behavior (deprecated — use max_active_sessions,\nmin_active_sessions, scale_check instead). When set, values are used as\nfallbacks for the new fields."
+        "drain_timeout": {
+          "type": "string",
+          "description": "DrainTimeout is the maximum time to wait for a session to finish its\ncurrent work before force-killing it during scale-down. Duration string\n(e.g., \"5m\", \"30m\", \"1h\"). Defaults to \"5m\".",
+          "default": "5m"
+        },
+        "on_boot": {
+          "type": "string",
+          "description": "OnBoot is a shell command run once at controller startup for this agent."
+        },
+        "on_death": {
+          "type": "string",
+          "description": "OnDeath is a shell command run when a session dies unexpectedly."
+        },
+        "namepool": {
+          "type": "string",
+          "description": "Namepool is the path to a plain text file with one name per line.\nWhen set, sessions use names from the file as display aliases."
         },
         "work_query": {
           "type": "string",
@@ -1180,47 +1193,6 @@
       "additionalProperties": false,
       "type": "object",
       "description": "Patches holds all patch blocks from composition."
-    },
-    "PoolConfig": {
-      "properties": {
-        "min": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Min is the minimum number of pool instances. Defaults to 0.",
-          "default": 0
-        },
-        "max": {
-          "type": "integer",
-          "minimum": -1,
-          "description": "Max is the maximum number of pool instances. 0 means the pool is\ndisabled (no instances will be created). -1 means unlimited (the\ncheck command's output determines scale with no upper cap).\nDefaults to 0.",
-          "default": 0
-        },
-        "check": {
-          "type": "string",
-          "description": "Check is a shell command whose output determines desired pool size. Defaults to \"echo 1\".",
-          "default": "echo 1"
-        },
-        "drain_timeout": {
-          "type": "string",
-          "description": "DrainTimeout is the maximum time to wait for a pool instance to finish its\ncurrent work before force-killing it. Duration string (e.g., \"5m\", \"30m\", \"1h\").\nDefaults to \"5m\".",
-          "default": "5m"
-        },
-        "on_death": {
-          "type": "string",
-          "description": "OnDeath is a shell command run when a pool instance dies.\nDefault: unclaims in_progress beads assigned to the dead instance."
-        },
-        "on_boot": {
-          "type": "string",
-          "description": "OnBoot is a shell command run once at controller startup for each pool.\nDefault: unclaims all in_progress beads labeled for this pool."
-        },
-        "namepool": {
-          "type": "string",
-          "description": "Namepool is the path to a plain text file with one name per line.\nWhen set, pool instances use names from the file instead of numeric\nsuffixes (e.g., \"furiosa\" instead of \"polecat-1\"). The path is\nresolved via adjustFragmentPath (relative to pack dir, absolute, or\n\"//\" for city-root-relative). Requires a bounded pool (max \u003e 0)."
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "description": "PoolConfig defines elastic pool parameters for an agent."
     },
     "PoolOverride": {
       "properties": {

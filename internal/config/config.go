@@ -30,12 +30,6 @@ const (
 	// The control lane is kept resident and blocks on workflow-relevant city
 	// events instead of exiting after each one-shot drain.
 	WorkflowControlStartCommand = `sh -c 'export GC_WORKFLOW_TRACE="${GC_WORKFLOW_TRACE:-${GC_CITY}/workflow-control-trace.log}"; exec "${GC_BIN:-gc}" workflow serve --follow ` + WorkflowControlAgentName + `'`
-	// WorkflowControlPoolLabel is the city-scoped pool label for workflow
-	// control beads. The control lane is intentionally city-scoped because
-	// graph.v2 workflow beads live in the city store.
-	// WorkflowControlPoolLabel is deprecated — routing now uses gc.routed_to
-	// metadata. Retained for backward compatibility with existing labeled beads.
-	WorkflowControlPoolLabel = "pool:" + WorkflowControlAgentName
 )
 
 // WorkflowControlStartCommandFor returns the start command for a
@@ -1093,59 +1087,6 @@ type AgentDefaults struct {
 	AllowEnvOverride []string `toml:"allow_env_override,omitempty"`
 }
 
-// PoolConfig defines elastic pool parameters for an agent. When present
-// on an Agent, that agent becomes a pool with scaling behavior.
-type PoolConfig struct {
-	// Min is the minimum number of pool instances. Defaults to 0.
-	Min int `toml:"min,omitempty" jsonschema:"minimum=0,default=0"`
-	// Max is the maximum number of pool instances. 0 means the pool is
-	// disabled (no instances will be created). -1 means unlimited (the
-	// check command's output determines scale with no upper cap).
-	// Defaults to 0.
-	Max int `toml:"max,omitempty" jsonschema:"minimum=-1,default=0"`
-	// Check is a shell command whose output determines desired pool size. Defaults to "echo 1".
-	Check string `toml:"check,omitempty" jsonschema:"default=echo 1"`
-	// DrainTimeout is the maximum time to wait for a pool instance to finish its
-	// current work before force-killing it. Duration string (e.g., "5m", "30m", "1h").
-	// Defaults to "5m".
-	DrainTimeout string `toml:"drain_timeout,omitempty" jsonschema:"default=5m"`
-	// OnDeath is a shell command run when a pool instance dies.
-	// Default: unclaims in_progress beads assigned to the dead instance.
-	OnDeath string `toml:"on_death,omitempty"`
-	// OnBoot is a shell command run once at controller startup for each pool.
-	// Default: unclaims all in_progress beads labeled for this pool.
-	OnBoot string `toml:"on_boot,omitempty"`
-	// Namepool is the path to a plain text file with one name per line.
-	// When set, pool instances use names from the file instead of numeric
-	// suffixes (e.g., "furiosa" instead of "polecat-1"). The path is
-	// resolved via adjustFragmentPath (relative to pack dir, absolute, or
-	// "//" for city-root-relative). Requires a bounded pool (max > 0).
-	Namepool string `toml:"namepool,omitempty"`
-	// NamepoolNames holds names loaded from the Namepool file at config load
-	// time. Not serialized to TOML.
-	NamepoolNames []string `toml:"-"`
-}
-
-// DrainTimeoutDuration returns the drain timeout as a time.Duration.
-// Defaults to 5m if empty or unparseable.
-func (p *PoolConfig) DrainTimeoutDuration() time.Duration {
-	if p.DrainTimeout == "" {
-		return 5 * time.Minute
-	}
-	dur, err := time.ParseDuration(p.DrainTimeout)
-	if err != nil {
-		return 5 * time.Minute
-	}
-	return dur
-}
-
-// IsUnlimited returns true if the pool has no upper bound (max < 0).
-func (p PoolConfig) IsUnlimited() bool { return p.Max < 0 }
-
-// IsMultiInstance returns true if the pool can have more than one instance.
-// This covers both bounded pools (max > 1) and unlimited pools (max < 0).
-func (p PoolConfig) IsMultiInstance() bool { return p.Max > 1 || p.Max < 0 }
-
 // Agent defines a configured agent in the city.
 type Agent struct {
 	// Name is the unique identifier for this agent.
@@ -1209,12 +1150,22 @@ type Agent struct {
 	MinActiveSessions *int `toml:"min_active_sessions,omitempty"`
 	// ScaleCheck is a shell command whose output determines desired session count.
 	// Optional override — when set, its output is the desired count (still clamped
-	// by all cap levels). Replaces pool.check.
+	// by all cap levels).
 	ScaleCheck string `toml:"scale_check,omitempty"`
-	// Pool configures elastic pool behavior (deprecated — use max_active_sessions,
-	// min_active_sessions, scale_check instead). When set, values are used as
-	// fallbacks for the new fields.
-	Pool *PoolConfig `toml:"pool,omitempty"`
+	// DrainTimeout is the maximum time to wait for a session to finish its
+	// current work before force-killing it during scale-down. Duration string
+	// (e.g., "5m", "30m", "1h"). Defaults to "5m".
+	DrainTimeout string `toml:"drain_timeout,omitempty" jsonschema:"default=5m"`
+	// OnBoot is a shell command run once at controller startup for this agent.
+	OnBoot string `toml:"on_boot,omitempty"`
+	// OnDeath is a shell command run when a session dies unexpectedly.
+	OnDeath string `toml:"on_death,omitempty"`
+	// Namepool is the path to a plain text file with one name per line.
+	// When set, sessions use names from the file as display aliases.
+	Namepool string `toml:"namepool,omitempty"`
+	// NamepoolNames holds names loaded from the Namepool file at config load
+	// time. Not serialized to TOML.
+	NamepoolNames []string `toml:"-"`
 	// WorkQuery is the shell command to find available work for this agent.
 	// Used by gc hook and available in prompt templates as {{.WorkQuery}}.
 	// Default for fixed agents: "bd ready --assignee=<qualified-name>".
@@ -1342,73 +1293,56 @@ func (a *Agent) AttachEnabled() bool {
 
 // EffectiveWorkQuery returns the work query command for this agent.
 // If WorkQuery is set, returns it as-is. Otherwise returns the default:
-//   - Pool agents: "bd ready --label=pool:<pool-name> --unassigned --json --limit=1 2>/dev/null"
-//   - Fixed agents: "bd ready --assignee=$GC_SESSION_NAME"
+// "bd ready --metadata-field gc.routed_to=<template> --unassigned --json --limit=1"
 //
-// Fixed agents use the $GC_SESSION_NAME env var (set by the reconciler
-// and by gc hook when invoked with a positional agent name) so each
-// session has its own work queue. Clones of a template don't race for
-// work — each checks only its own queue.
-//
-// Pool instances use PoolName (the template's qualified name) so all
-// instances in the pool search with the same label (e.g., pool:dog)
-// rather than their instance name (e.g., pool:dog-1).
+// All agents use metadata-based routing via gc.routed_to. The template
+// name (QualifiedName or PoolName for rig-scoped instances) determines
+// which beads are visible to this agent's sessions.
 func (a *Agent) EffectiveWorkQuery() string {
 	if a.WorkQuery != "" {
 		return a.WorkQuery
 	}
-	if a.IsPool() {
-		// Default: find unassigned ready beads routed to this pool template.
-		// Pool instances use PoolName so all instances share the same queue.
-		target := a.QualifiedName()
-		if a.PoolName != "" {
-			target = a.PoolName
-		}
-		return "bd ready --metadata-field gc.routed_to=" + target + " --unassigned --json --limit=1 2>/dev/null"
+	target := a.QualifiedName()
+	if a.PoolName != "" {
+		target = a.PoolName
 	}
-	return `bd ready --assignee="$GC_SESSION_NAME" --json --limit=1 2>/dev/null`
+	return "bd ready --metadata-field gc.routed_to=" + target + " --unassigned --json --limit=1 2>/dev/null"
 }
 
 // EffectiveSlingQuery returns the sling query command template for this agent.
 // The template uses {} as a placeholder for the bead ID.
 // If SlingQuery is set, returns it as-is. Otherwise returns the default:
-//   - Pool agents: "bd update {} --set-metadata gc.routed_to=<template>"
-//   - Fixed agents: "bd update {} --assignee=$GC_SLING_TARGET"
+// "bd update {} --set-metadata gc.routed_to=<template>"
 //
-// Fixed agents use $GC_SLING_TARGET, which is set by gc sling to the
-// resolved session name of the target. This gives each session its own
-// work queue — clones don't race for the same assignments.
+// All agents use metadata-based routing. The reconciler and scale_check
+// handle session creation; sling just stamps the target template.
 func (a *Agent) EffectiveSlingQuery() string {
 	if a.SlingQuery != "" {
 		return a.SlingQuery
 	}
-	if a.IsPool() {
-		return "bd update {} --set-metadata gc.routed_to=" + a.QualifiedName()
-	}
-	return "bd update {} --assignee=$GC_SLING_TARGET"
+	return "bd update {} --set-metadata gc.routed_to=" + a.QualifiedName()
 }
 
-// EffectivePool returns the pool configuration for this agent, applying
-// defaults. If Pool is nil, returns an always-on singleton (min=1, max=1,
-// check="echo 1"). If Pool is set and Check is empty, generates a default
-// that counts open beads labeled with the agent's qualified name — consistent
-// with EffectiveSlingQuery and EffectiveWorkQuery.
-func (a *Agent) EffectivePool() PoolConfig {
-	if a.Pool == nil {
-		return PoolConfig{Min: 1, Max: 1, Check: "echo 1"}
+// DrainTimeoutDuration returns the drain timeout as a time.Duration.
+// Defaults to 5m if empty or unparseable.
+func (a *Agent) DrainTimeoutDuration() time.Duration {
+	if a.DrainTimeout == "" {
+		return 5 * time.Minute
 	}
-	p := *a.Pool
-	if p.Check == "" {
-		p.Check = a.defaultPoolCheck()
+	dur, err := time.ParseDuration(a.DrainTimeout)
+	if err != nil {
+		return 5 * time.Minute
 	}
-	return p
+	return dur
 }
 
-// defaultPoolCheck returns the default pool check command that counts
-// actionable work for this pool. Uses bd ready (blocker-aware) for open
-// beads plus bd list --status=in_progress for claimed work. Routes via
-// gc.routed_to metadata.
-func (a *Agent) defaultPoolCheck() string {
+// EffectiveScaleCheck returns the scale check command for this agent.
+// If ScaleCheck is set, returns it. Otherwise returns a default that
+// counts actionable work routed to this agent's template.
+func (a *Agent) EffectiveScaleCheck() string {
+	if a.ScaleCheck != "" {
+		return a.ScaleCheck
+	}
 	template := a.QualifiedName()
 	return `ready=$(bd ready --metadata-field gc.routed_to=` + template +
 		` --unassigned --json 2>/dev/null | jq 'length' 2>/dev/null); ` +
@@ -1417,46 +1351,18 @@ func (a *Agent) defaultPoolCheck() string {
 		`echo "$(( ${ready:-0} + ${active:-0} ))" || echo 0`
 }
 
-// IsPool reports whether this agent has explicit pool configuration.
-func (a *Agent) IsPool() bool {
-	return a.Pool != nil
-}
-
 // EffectiveMaxActiveSessions returns the agent's max active sessions.
 // Priority: agent.MaxActiveSessions > pool.Max > nil (unlimited).
 func (a *Agent) EffectiveMaxActiveSessions() *int {
-	if a.MaxActiveSessions != nil {
-		return a.MaxActiveSessions
-	}
-	if a.Pool != nil {
-		max := a.Pool.Max
-		return &max
-	}
-	return nil
+	return a.MaxActiveSessions // nil = unlimited (default)
 }
 
 // EffectiveMinActiveSessions returns the agent's min active sessions.
-// Priority: agent.MinActiveSessions > pool.Min > 0.
 func (a *Agent) EffectiveMinActiveSessions() int {
 	if a.MinActiveSessions != nil && *a.MinActiveSessions > 0 {
 		return *a.MinActiveSessions
 	}
-	if a.Pool != nil {
-		return a.Pool.Min
-	}
 	return 0
-}
-
-// EffectiveScaleCheck returns the agent's scale check command.
-// Priority: agent.ScaleCheck > pool.Check > "".
-func (a *Agent) EffectiveScaleCheck() string {
-	if a.ScaleCheck != "" {
-		return a.ScaleCheck
-	}
-	if a.Pool != nil && a.Pool.Check != "" {
-		return a.Pool.Check
-	}
-	return ""
 }
 
 // ResolvedMaxActiveSessions returns the effective max for this agent,
@@ -1480,45 +1386,31 @@ func (a *Agent) ResolvedMaxActiveSessions(cfg *City) *int {
 	return nil // unlimited
 }
 
-// EffectiveOnDeath returns the on_death command for this pool agent.
-// Default: unclaims in_progress beads assigned to this agent.
+// EffectiveOnDeath returns the on_death command for this agent.
+// If OnDeath is set, returns it. Otherwise returns a default that
+// unclaims in_progress beads assigned to this agent.
 func (a *Agent) EffectiveOnDeath() string {
-	pool := a.EffectivePool()
-	if pool.OnDeath != "" {
-		return pool.OnDeath
+	if a.OnDeath != "" {
+		return a.OnDeath
 	}
-	if !a.IsPool() {
-		return ""
-	}
-	return a.defaultOnDeath()
-}
-
-func (a *Agent) defaultOnDeath() string {
 	return `bd list --assignee=` + a.QualifiedName() +
 		` --status=in_progress --json 2>/dev/null | ` +
 		`jq -r '.[].id' 2>/dev/null | ` +
 		`xargs -rI{} bd update {} --unclaim 2>/dev/null`
 }
 
-// EffectiveOnBoot returns the on_boot command for this pool agent.
-// Default: unclaims all in_progress beads labeled for this pool.
+// EffectiveOnBoot returns the on_boot command for this agent.
+// If OnBoot is set, returns it. Otherwise returns a default that
+// unclaims all in_progress beads routed to this agent's template.
 func (a *Agent) EffectiveOnBoot() string {
-	pool := a.EffectivePool()
-	if pool.OnBoot != "" {
-		return pool.OnBoot
+	if a.OnBoot != "" {
+		return a.OnBoot
 	}
-	if !a.IsPool() {
-		return ""
-	}
-	return a.defaultOnBoot()
-}
-
-func (a *Agent) defaultOnBoot() string {
-	label := a.QualifiedName()
+	template := a.QualifiedName()
 	if a.PoolName != "" {
-		label = a.PoolName
+		template = a.PoolName
 	}
-	return `bd list --label=pool:` + label +
+	return `bd list --metadata-field gc.routed_to=` + template +
 		` --status=in_progress --json 2>/dev/null | ` +
 		`jq -r '.[].id' 2>/dev/null | ` +
 		`xargs -rI{} bd update {} --unclaim 2>/dev/null`
@@ -1564,7 +1456,6 @@ func InjectImplicitAgents(cfg *City) {
 			Name:                name,
 			Provider:            name,
 			PromptTemplate:      promptTemplate,
-			Pool:                &PoolConfig{Min: 0, Max: -1},
 			DefaultSlingFormula: "mol-do-work",
 			Implicit:            true,
 		})
@@ -1581,7 +1472,6 @@ func InjectImplicitAgents(cfg *City) {
 				Dir:                 rig.Name,
 				Provider:            name,
 				PromptTemplate:      promptTemplate,
-				Pool:                &PoolConfig{Min: 0, Max: -1},
 				DefaultSlingFormula: "mol-do-work",
 				Implicit:            true,
 			})
@@ -1612,13 +1502,15 @@ func newWorkflowControlAgent(dir string) Agent {
 	if dir != "" {
 		qualifiedName = dir + "/" + WorkflowControlAgentName
 	}
+	one := 1
 	a := Agent{
-		Name:         WorkflowControlAgentName,
-		Dir:          dir,
-		Description:  "Built-in deterministic graph.v2 workflow control worker",
-		StartCommand: WorkflowControlStartCommandFor(qualifiedName),
-		Pool:         &PoolConfig{Min: 1, Max: 1},
-		Implicit:     true,
+		Name:              WorkflowControlAgentName,
+		Dir:               dir,
+		Description:       "Built-in deterministic graph.v2 workflow control worker",
+		StartCommand:      WorkflowControlStartCommandFor(qualifiedName),
+		MinActiveSessions: &one,
+		MaxActiveSessions: &one,
+		Implicit:          true,
 	}
 	return a
 }
@@ -1723,23 +1615,16 @@ func ValidateAgents(agents []Agent) error {
 		default:
 			return fmt.Errorf("agent %q: wake_mode must be \"resume\", \"fresh\", or empty, got %q", a.QualifiedName(), a.WakeMode)
 		}
-		if a.Pool != nil {
-			if a.Pool.Min < 0 {
-				return fmt.Errorf("agent %q: pool min must be >= 0", a.Name)
-			}
-			if a.Pool.Max < -1 {
-				return fmt.Errorf("agent %q: pool max must be >= -1 (use -1 for unlimited)", a.Name)
-			}
-			if a.Pool.Max >= 0 && a.Pool.Min > a.Pool.Max {
-				return fmt.Errorf("agent %q: pool min (%d) must be <= max (%d)", a.Name, a.Pool.Min, a.Pool.Max)
-			}
-			// Pool agents: sling_query and work_query must be both set or both unset.
-			hasSQ := a.SlingQuery != ""
-			hasWQ := a.WorkQuery != ""
-			if hasSQ != hasWQ {
-				return fmt.Errorf("agent %q: pool agents must set both sling_query and work_query, or neither (got sling_query=%v, work_query=%v)",
-					a.QualifiedName(), hasSQ, hasWQ)
-			}
+		if a.MinActiveSessions != nil && *a.MinActiveSessions < 0 {
+			return fmt.Errorf("agent %q: min_active_sessions must be >= 0", a.Name)
+		}
+		if a.MaxActiveSessions != nil && *a.MaxActiveSessions < -1 {
+			return fmt.Errorf("agent %q: max_active_sessions must be >= -1 (use -1 for unlimited)", a.Name)
+		}
+		if a.MaxActiveSessions != nil && a.MinActiveSessions != nil &&
+			*a.MaxActiveSessions >= 0 && *a.MinActiveSessions > *a.MaxActiveSessions {
+			return fmt.Errorf("agent %q: min_active_sessions (%d) must be <= max_active_sessions (%d)",
+				a.Name, *a.MinActiveSessions, *a.MaxActiveSessions)
 		}
 	}
 
@@ -1793,9 +1678,6 @@ func ValidateNamedSessions(cfg *City) error {
 		agent := agentsByTemplate[s.QualifiedName()]
 		if agent == nil {
 			return fmt.Errorf("named_session %q: referenced template not found after pack expansion", s.QualifiedName())
-		}
-		if agent.IsPool() {
-			return fmt.Errorf("named_session %q: referenced template %q is a pool; use the pool directly", s.QualifiedName(), agent.QualifiedName())
 		}
 		identity := s.QualifiedName()
 		sessionName := NamedSessionRuntimeName(cfg.EffectiveCityName(), cfg.Workspace, identity)

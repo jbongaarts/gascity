@@ -94,16 +94,16 @@ func cmdStop(args []string, stdout, stderr io.Writer) int {
 	var sessionNames []string
 	desired := make(map[string]bool, len(cfg.Agents))
 	for _, a := range cfg.Agents {
-		pool := a.EffectivePool()
+		sp0 := scaleParamsFor(&a)
 		qn := a.QualifiedName()
-		if !pool.IsMultiInstance() {
+		if sp0.Max == 1 {
 			// Single agent.
 			sn := lookupSessionNameOrLegacy(store, cityName, qn, st)
 			sessionNames = append(sessionNames, sn)
 			desired[sn] = true
 		} else {
 			// Pool agent: resolve runtime session names from beads first, then legacy discovery.
-			for _, ref := range resolvePoolSessionRefs(store, a.Name, a.Dir, pool, cityName, st, sp, stderr) {
+			for _, ref := range resolvePoolSessionRefs(store, a.Name, a.Dir, sp0, &a, cityName, st, sp, stderr) {
 				sessionNames = append(sessionNames, ref.sessionName)
 				desired[ref.sessionName] = true
 			}

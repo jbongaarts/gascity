@@ -112,7 +112,7 @@ func TestCityStatusPoolExpansion(t *testing.T) {
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "city"},
 		Agents: []config.Agent{
-			{Name: "polecat", Dir: "hw", Pool: &config.PoolConfig{Min: 1, Max: 3, Check: "echo 1"}},
+			{Name: "polecat", Dir: "hw", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(3), ScaleCheck: "echo 1"},
 		},
 	}
 
@@ -226,7 +226,7 @@ func TestCityStatusJSONWithAgents(t *testing.T) {
 		Workspace: config.Workspace{Name: "city"},
 		Agents: []config.Agent{
 			{Name: "mayor"},
-			{Name: "polecat", Dir: "myrig", Pool: &config.PoolConfig{Min: 0, Max: 3}},
+			{Name: "polecat", Dir: "myrig", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3)},
 		},
 		Rigs: []config.Rig{
 			{Name: "myrig", Path: "/home/user/myrig"},

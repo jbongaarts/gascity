@@ -77,7 +77,7 @@ func sessionToResponse(info session.Info, cfg *config.City) sessionResponse {
 	// Populate pool from config lookup. The pool field is the agent's
 	// base name (e.g., "polecat"), useful for dashboard type classification.
 	if cfg != nil {
-		if agent, ok := findAgent(cfg, info.Template); ok && agent.IsPool() {
+		if agent, ok := findAgent(cfg, info.Template); ok && isMultiSessionAgent(agent) {
 			r.Pool = agent.Name
 		}
 	}

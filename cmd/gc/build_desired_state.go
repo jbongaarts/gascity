@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +27,7 @@ type DesiredStateResult struct {
 
 type poolEvalWork struct {
 	agentIdx int
-	pool     config.PoolConfig
+	sp       scaleParams
 	poolDir  string
 }
 
@@ -43,11 +44,11 @@ func evaluatePendingPools(
 	var wg sync.WaitGroup
 	for j, pw := range pendingPools {
 		wg.Add(1)
-		go func(idx int, name string, pool config.PoolConfig, dir string) {
+		go func(idx int, name string, sp scaleParams, dir string) {
 			defer wg.Done()
-			d, err := evaluatePool(name, pool, dir, shellScaleCheck)
+			d, err := evaluatePool(name, sp, dir, shellScaleCheck)
 			evalResults[idx] = poolEvalResult{desired: d, err: err}
-		}(j, cfg.Agents[pw.agentIdx].Name, pw.pool, pw.poolDir)
+		}(j, cfg.Agents[pw.agentIdx].Name, pw.sp, pw.poolDir)
 	}
 	wg.Wait()
 
@@ -55,7 +56,7 @@ func evaluatePendingPools(
 	for j, pw := range pendingPools {
 		pr := evalResults[j]
 		if pr.err != nil {
-			fmt.Fprintf(stderr, "buildDesiredState: %v (using min=%d)\n", pr.err, pw.pool.Min) //nolint:errcheck
+			fmt.Fprintf(stderr, "buildDesiredState: %v (using min=%d)\n", pr.err, pw.sp.Min) //nolint:errcheck
 		}
 		counts[j] = pr.desired
 	}
@@ -142,13 +143,14 @@ func buildDesiredStateWithSessionBeads(
 			continue
 		}
 
-		pool := cfg.Agents[i].EffectivePool()
+		sp := scaleParamsFor(&cfg.Agents[i])
 
-		if pool.Max == 0 {
+		if sp.Max == 0 {
 			continue
 		}
 
-		if pool.Max == 1 && !cfg.Agents[i].IsPool() {
+		isExplicitMultiSession := cfg.Agents[i].MaxActiveSessions != nil && *cfg.Agents[i].MaxActiveSessions != 1
+		if sp.Max == 1 && !isExplicitMultiSession {
 			// Fixed agent.
 			rigName := configuredRigName(cityPath, &cfg.Agents[i], cfg.Rigs)
 			if rigName != "" && suspendedRigPaths[filepath.Clean(rigRootForName(rigName, cfg.Rigs))] {
@@ -174,7 +176,7 @@ func buildDesiredStateWithSessionBeads(
 		// them directly; bead-backed mode falls back to them when work-bead
 		// listing fails so transient store errors do not collapse demand to 0.
 		poolDir := agentCommandDir(cityPath, &cfg.Agents[i], cfg.Rigs)
-		pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, pool: pool, poolDir: poolDir})
+		pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, sp: sp, poolDir: poolDir})
 	}
 
 	// scale_check runs in parallel for all pool agents — the authoritative
@@ -205,8 +207,9 @@ func buildDesiredStateWithSessionBeads(
 				// If multi-instance (max > 1 or unlimited), use themed name
 				// (from namepool) or {name}-{N} suffix.
 				name := cfg.Agents[pw.agentIdx].Name
-				if pw.pool.IsMultiInstance() {
-					name = poolInstanceName(cfg.Agents[pw.agentIdx].Name, slot, pw.pool)
+				isMultiInstance := pw.sp.Max != 1
+				if isMultiInstance {
+					name = poolInstanceName(cfg.Agents[pw.agentIdx].Name, slot, &cfg.Agents[pw.agentIdx])
 				}
 				qualifiedInstance := name
 				if cfg.Agents[pw.agentIdx].Dir != "" {
@@ -361,8 +364,16 @@ func discoverSessionBeadsWithRoots(
 		// instances. Don't re-add stale session beads — that bypasses
 		// scaling and causes infinite wake→drain→stop loops when there's
 		// no work.
-		if cfgAgent.Pool != nil {
+		if isMultiSessionCfgAgent(cfgAgent) {
 			manualSession := b.Metadata["manual_session"] == "true"
+			// Controller-owned multi-session session beads are realized exclusively
+			// via poolDesired. Rediscovering them here keeps drained/stale
+			// sessions in desired state forever, which prevents sweep from
+			// closing them and forces future generic demand to create fresh
+			// session beads instead of cleaning up the old ones.
+			if isPoolManagedSessionBead(b) && !manualSession && !isNamedSessionBead(b) {
+				continue
+			}
 			if !manualSession && !desiredHasTemplate(desired, template) {
 				continue
 			}
@@ -375,7 +386,7 @@ func discoverSessionBeadsWithRoots(
 			continue
 		}
 		tp.ManualSession = b.Metadata["manual_session"] == "true"
-		if cfgAgent.Pool != nil {
+		if isMultiSessionCfgAgent(cfgAgent) {
 			tp.Alias = ""
 			tp.InstanceName = sn
 		}
@@ -430,14 +441,16 @@ func ensureDependencyOnlyTemplate(
 	desired map[string]TemplateParams,
 	stderr io.Writer,
 ) {
-	if cfgAgent == nil || cfgAgent.Pool == nil || desiredHasTemplate(desired, cfgAgent.QualifiedName()) {
+	if cfgAgent == nil || !isMultiSessionCfgAgent(cfgAgent) || desiredHasTemplate(desired, cfgAgent.QualifiedName()) {
 		return
 	}
 
 	if bp.beadStore == nil {
 		name := cfgAgent.Name
-		if cfgAgent.Pool.IsMultiInstance() {
-			name = poolInstanceName(cfgAgent.Name, 1, *cfgAgent.Pool)
+		sp := scaleParamsFor(cfgAgent)
+		isMultiInstance := sp.Max != 1
+		if isMultiInstance {
+			name = poolInstanceName(cfgAgent.Name, 1, cfgAgent)
 		}
 		qualifiedInstance := name
 		if cfgAgent.Dir != "" {
@@ -457,7 +470,7 @@ func ensureDependencyOnlyTemplate(
 	}
 
 	qualifiedName := cfgAgent.QualifiedName()
-	sessionBead, err := selectOrCreateDependencyPoolSessionBead(bp, qualifiedName)
+	sessionBead, err := selectOrCreateDependencyPoolSessionBead(bp, cfgAgent, qualifiedName)
 	if err != nil {
 		fmt.Fprintf(stderr, "buildDesiredState: dependency floor %q: %v (skipping)\n", qualifiedName, err) //nolint:errcheck
 		return
@@ -587,10 +600,14 @@ func selectOrCreatePoolSessionBead(
 
 func selectOrCreateDependencyPoolSessionBead(
 	bp *agentBuildParams,
+	cfgAgent *config.Agent,
 	template string,
 ) (beads.Bead, error) {
 	for _, bead := range bp.sessionBeads.Open() {
 		if bead.Status == "closed" || bead.Metadata["manual_session"] == boolMetadata(true) {
+			continue
+		}
+		if isDrainedSessionBead(bead) {
 			continue
 		}
 		if isNamedSessionBead(bead) {
@@ -607,6 +624,54 @@ func selectOrCreateDependencyPoolSessionBead(
 		}
 	}
 	return createPoolSessionBead(bp.beadStore, template, bp.sessionBeads)
+}
+
+func allocatePoolInstanceIdentity(bp *agentBuildParams, cfgAgent *config.Agent, template string) (string, int) {
+	if bp == nil || cfgAgent == nil {
+		return "", 0
+	}
+	sp := scaleParamsFor(cfgAgent)
+	if sp.Max == 1 {
+		return "", 0
+	}
+
+	occupied := make(map[int]bool)
+	if bp.sessionBeads != nil {
+		cfg := &config.City{Agents: bp.agents}
+		for _, bead := range bp.sessionBeads.Open() {
+			if bead.Status == "closed" {
+				continue
+			}
+			if normalizedSessionTemplate(bead, cfg) != template {
+				continue
+			}
+			if slot := poolSlotForBead(bead, template); slot > 0 {
+				occupied[slot] = true
+			}
+		}
+	}
+
+	slot := 1
+	for occupied[slot] {
+		slot++
+	}
+	name := poolInstanceName(cfgAgent.Name, slot, cfgAgent)
+	if cfgAgent.Dir != "" {
+		name = cfgAgent.Dir + "/" + name
+	}
+	return name, slot
+}
+
+func poolSlotForBead(bead beads.Bead, template string) int {
+	if raw := strings.TrimSpace(bead.Metadata["pool_slot"]); raw != "" {
+		if slot, err := strconv.Atoi(raw); err == nil && slot > 0 {
+			return slot
+		}
+	}
+	if agentName := sessionBeadAgentName(bead); agentName != "" {
+		return resolvePoolSlot(agentName, template)
+	}
+	return 0
 }
 
 func agentInSuspendedRig(
@@ -640,12 +705,22 @@ func installAgentSideEffects(bp *agentBuildParams, cfgAgent *config.Agent, tp Te
 	}
 }
 
+// isMultiSessionCfgAgent reports whether a config agent supports multiple
+// concurrent sessions. This replaces the removed IsPool() / Pool != nil checks.
+func isMultiSessionCfgAgent(a *config.Agent) bool {
+	if a == nil {
+		return false
+	}
+	max := a.EffectiveMaxActiveSessions()
+	return max == nil || *max != 1
+}
+
 // poolInstanceName returns the name for pool slot N.
-// If the pool has namepool names and the slot is in range, uses the themed
+// If the agent has namepool names and the slot is in range, uses the themed
 // name. Otherwise falls back to "{base}-{slot}".
-func poolInstanceName(base string, slot int, pool config.PoolConfig) string {
-	if slot >= 1 && slot <= len(pool.NamepoolNames) {
-		return pool.NamepoolNames[slot-1]
+func poolInstanceName(base string, slot int, a *config.Agent) string {
+	if a != nil && slot >= 1 && slot <= len(a.NamepoolNames) {
+		return a.NamepoolNames[slot-1]
 	}
 	return fmt.Sprintf("%s-%d", base, slot)
 }

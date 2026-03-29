@@ -67,7 +67,7 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, _ *http.Request) {
 			Name:      a.Name,
 			Dir:       a.Dir,
 			Provider:  a.Provider,
-			IsPool:    a.IsPool(),
+			IsPool:    isMultiSessionAgent(a),
 			Scope:     a.Scope,
 			Suspended: a.Suspended,
 		})
@@ -149,7 +149,7 @@ func (s *Server) handleConfigExplain(w http.ResponseWriter, _ *http.Request) {
 				Name:      a.Name,
 				Dir:       a.Dir,
 				Provider:  a.Provider,
-				IsPool:    a.IsPool(),
+				IsPool:    isMultiSessionAgent(a),
 				Scope:     a.Scope,
 				Suspended: a.Suspended,
 			},

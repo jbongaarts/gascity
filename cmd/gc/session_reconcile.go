@@ -468,7 +468,7 @@ func sessionIsQuarantined(session beads.Bead, clk clock.Clock) bool {
 func isPoolExcess(session beads.Bead, cfg *config.City, poolDesired map[string]int) bool {
 	template := normalizedSessionTemplate(session, cfg)
 	agent := findAgentByTemplate(cfg, template)
-	if agent == nil || agent.Pool == nil {
+	if agent == nil || !isMultiSessionCfgAgent(agent) {
 		return false
 	}
 	// A session is excess when demand is zero.

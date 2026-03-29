@@ -163,16 +163,16 @@ func doCityStatus(
 		for _, a := range cfg.Agents {
 			// Effective suspended: agent-level or inherited from rig.
 			suspended := a.Suspended || (a.Dir != "" && suspendedRigs[a.Dir])
-			pool := a.EffectivePool()
+			sp0 := scaleParamsFor(&a)
 
-			if pool.IsMultiInstance() {
-				// Pool agent — show pool header then instances.
-				maxDisplay := fmt.Sprintf("max=%d", pool.Max)
-				if pool.IsUnlimited() {
+			if sp0.Max != 1 {
+				// Multi-session agent — show header then instances.
+				maxDisplay := fmt.Sprintf("max=%d", sp0.Max)
+				if sp0.Max < 0 {
 					maxDisplay = "max=unlimited"
 				}
-				fmt.Fprintf(stdout, "  %-24spool (min=%d, %s)\n", a.QualifiedName(), pool.Min, maxDisplay) //nolint:errcheck // best-effort stdout
-				for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, pool, cityName, cfg.Workspace.SessionTemplate, sp) {
+				fmt.Fprintf(stdout, "  %-24spool (min=%d, %s)\n", a.QualifiedName(), sp0.Min, maxDisplay) //nolint:errcheck // best-effort stdout
+				for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, sp0, &a, cityName, cfg.Workspace.SessionTemplate, sp) {
 					sn := cliSessionName(cityPath, cityName, qualifiedInstance, cfg.Workspace.SessionTemplate)
 					status := agentStatusLine(sp, dops, sn, suspended)
 					fmt.Fprintf(stdout, "    %-22s%s\n", qualifiedInstance, status) //nolint:errcheck // best-effort stdout
@@ -263,15 +263,15 @@ func doCityStatusJSON(
 	var totalAgents, runningAgents int
 	for _, a := range cfg.Agents {
 		suspended := a.Suspended || (a.Dir != "" && suspendedRigs[a.Dir])
-		pool := a.EffectivePool()
+		sp0 := scaleParamsFor(&a)
 		scope := "city"
 		if a.Dir != "" {
 			scope = "rig"
 		}
 
-		if pool.IsMultiInstance() {
-			// Pool agent — emit each instance.
-			for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, pool, cityName, cfg.Workspace.SessionTemplate, sp) {
+		if sp0.Max != 1 {
+			// Multi-session agent — emit each instance.
+			for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, sp0, &a, cityName, cfg.Workspace.SessionTemplate, sp) {
 				_, instanceName := config.ParseQualifiedName(qualifiedInstance)
 				sn := cliSessionName(cityPath, cityName, qualifiedInstance, cfg.Workspace.SessionTemplate)
 				running := sp.IsRunning(sn)
@@ -281,7 +281,7 @@ func doCityStatusJSON(
 					Scope:         scope,
 					Running:       running,
 					Suspended:     suspended,
-					Pool:          &PoolJSON{Min: pool.Min, Max: pool.Max},
+					Pool:          &PoolJSON{Min: sp0.Min, Max: sp0.Max},
 				})
 				totalAgents++
 				if running {

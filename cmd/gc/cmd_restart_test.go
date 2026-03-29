@@ -105,7 +105,7 @@ func TestDoRigRestartWithPool(t *testing.T) {
 
 	rec := events.NewFake()
 	agents := []config.Agent{
-		{Name: "worker", Dir: "frontend", Pool: &config.PoolConfig{Min: 1, Max: 3, Check: "echo 2"}},
+		{Name: "worker", Dir: "frontend", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(3), ScaleCheck: "echo 2"},
 	}
 
 	var stdout, stderr bytes.Buffer
@@ -189,9 +189,9 @@ func TestDoRigRestart_UsesPoolSessionBeadsForCustomSessionNames(t *testing.T) {
 
 	rec := events.NewFake()
 	agents := []config.Agent{{
-		Name: "worker",
-		Dir:  "frontend",
-		Pool: &config.PoolConfig{Min: 1, Max: 2, Check: "echo 1"},
+		Name:              "worker",
+		Dir:               "frontend",
+		MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(2), ScaleCheck: "echo 1",
 	}}
 
 	var stdout, stderr bytes.Buffer
@@ -232,9 +232,9 @@ func TestDoRigRestart_UsesUnlimitedPoolSessionBeadsForCustomSessionNames(t *test
 
 	rec := events.NewFake()
 	agents := []config.Agent{{
-		Name: "worker",
-		Dir:  "frontend",
-		Pool: &config.PoolConfig{Min: 1, Max: -1, Check: "echo 1"},
+		Name:              "worker",
+		Dir:               "frontend",
+		MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(-1), ScaleCheck: "echo 1",
 	}}
 
 	var stdout, stderr bytes.Buffer
@@ -274,9 +274,9 @@ func TestDoRigRestart_UsesLegacyPoolAgentLabelForCustomSessionNames(t *testing.T
 
 	rec := events.NewFake()
 	agents := []config.Agent{{
-		Name: "worker",
-		Dir:  "frontend",
-		Pool: &config.PoolConfig{Min: 1, Max: 2, Check: "echo 1"},
+		Name:              "worker",
+		Dir:               "frontend",
+		MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(2), ScaleCheck: "echo 1",
 	}}
 
 	var stdout, stderr bytes.Buffer
@@ -316,9 +316,9 @@ func TestDoRigRestart_UsesLegacyUnlimitedPoolAgentLabelForCustomSessionNames(t *
 
 	rec := events.NewFake()
 	agents := []config.Agent{{
-		Name: "worker",
-		Dir:  "frontend",
-		Pool: &config.PoolConfig{Min: 1, Max: -1, Check: "echo 1"},
+		Name:              "worker",
+		Dir:               "frontend",
+		MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(-1), ScaleCheck: "echo 1",
 	}}
 
 	var stdout, stderr bytes.Buffer

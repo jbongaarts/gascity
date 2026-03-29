@@ -427,7 +427,7 @@ func doSling(opts slingOpts, deps slingDeps, querier BeadQuerier) int {
 	if a.Suspended && !opts.Force {
 		fmt.Fprintf(deps.Stderr, "warning: agent %q is suspended — bead routed but may not be picked up\n", a.QualifiedName()) //nolint:errcheck // best-effort
 	}
-	if a.IsPool() && a.Pool.Max == 0 && !opts.Force {
+	if sp := scaleParamsFor(&a); isMultiSessionCfgAgent(&a) && sp.Max == 0 && !opts.Force {
 		fmt.Fprintf(deps.Stderr, "warning: pool %q has max=0 — bead routed but no instances to claim it\n", a.QualifiedName()) //nolint:errcheck // best-effort
 	}
 
@@ -943,7 +943,7 @@ func slingFormulaUsesTargetBranch(formula string) bool {
 // the bead store and returns it as GC_SLING_TARGET. Pool agents don't
 // need this — they use label-based dispatch.
 func resolveSlingEnv(a config.Agent, deps slingDeps) map[string]string {
-	if a.IsPool() {
+	if isMultiSessionCfgAgent(&a) {
 		return nil
 	}
 	sn := lookupSessionNameOrLegacy(deps.Store, deps.CityName, a.QualifiedName(), deps.Cfg.Workspace.SessionTemplate)
@@ -1082,7 +1082,7 @@ func instantiateSlingFormula(ctx context.Context, formulaName string, searchPath
 	slingTracef("instantiate compiled formula=%s dur=%s steps=%d", formulaName, time.Since(compileStart), len(recipe.Steps))
 	if isCompiledGraphWorkflow(recipe) {
 		var sessionName string
-		if !a.IsPool() {
+		if !isMultiSessionCfgAgent(&a) {
 			sessionName = lookupSessionNameOrLegacy(deps.Store, deps.CityName, a.QualifiedName(), deps.Cfg.Workspace.SessionTemplate)
 			if sessionName == "" {
 				return nil, fmt.Errorf("could not resolve session name for %q", a.QualifiedName())
@@ -1337,7 +1337,7 @@ func resolveGraphStepBindingWithVars(stepID string, stepByID map[string]*formula
 		return graphRouteBinding{}, fmt.Errorf("step %s: unknown graph.v2 target %q", stepID, target)
 	}
 	binding := graphRouteBinding{qualifiedName: agentCfg.QualifiedName()}
-	if agentCfg.IsPool() {
+	if isMultiSessionCfgAgent(&agentCfg) {
 		binding.label = "pool:" + agentCfg.QualifiedName()
 		cache[stepID] = binding
 		return binding, nil
@@ -1441,7 +1441,7 @@ func startGraphWorkflow(result *molecule.Result, sourceBeadID string, a config.A
 
 // targetType returns "pool" or "agent" for telemetry attributes.
 func targetType(a *config.Agent) string {
-	if a.IsPool() {
+	if isMultiSessionCfgAgent(a) {
 		return "pool"
 	}
 	return "agent"
@@ -1483,7 +1483,7 @@ func checkBeadState(q BeadQuerier, beadID string, a config.Agent) beadCheckResul
 	target := a.QualifiedName()
 
 	// Fixed agent: check assignee match.
-	if !a.IsPool() {
+	if !isMultiSessionCfgAgent(&a) {
 		if b.Assignee == target {
 			return beadCheckResult{Idempotent: true}
 		}
@@ -1532,10 +1532,10 @@ func doSlingNudge(a *config.Agent, cityName, cityPath string, cfg *config.City,
 		return
 	}
 
-	if a.IsPool() {
-		// Find a running pool member to nudge.
-		pool := a.EffectivePool()
-		for _, qn := range discoverPoolInstances(a.Name, a.Dir, pool, cityName, st, sp) {
+	if isMultiSessionCfgAgent(a) {
+		// Find a running multi-session instance to nudge.
+		sp0 := scaleParamsFor(a)
+		for _, qn := range discoverPoolInstances(a.Name, a.Dir, sp0, a, cityName, st, sp) {
 			sn := lookupSessionNameOrLegacy(store, cityName, qn, st)
 			if sp.IsRunning(sn) {
 				member, ok := resolveAgentIdentity(cfg, qn, currentRigContext(cfg))
@@ -1735,7 +1735,7 @@ func dryRunSingle(opts slingOpts, deps slingDeps, querier BeadQuerier) int {
 		w("Route command (not executed):")
 		w("  " + routeCmd)
 		if !isCustomSlingQuery(a) {
-			if a.IsPool() {
+			if isMultiSessionCfgAgent(&a) {
 				w("  This labels the bead for pool \"" + a.QualifiedName() + "\".")
 			} else {
 				w("  This assigns the bead to \"" + a.QualifiedName() + "\".")
@@ -1841,20 +1841,20 @@ func dryRunBatch(opts slingOpts, deps slingDeps,
 // printTarget prints the Target section for dry-run output.
 func printTarget(w func(string), a config.Agent) {
 	w("Target:")
-	if a.IsPool() {
-		pool := a.EffectivePool()
-		maxDisplay := fmt.Sprintf("max=%d", pool.Max)
-		if pool.IsUnlimited() {
+	if isMultiSessionCfgAgent(&a) {
+		sp := scaleParamsFor(&a)
+		maxDisplay := fmt.Sprintf("max=%d", sp.Max)
+		if sp.Max < 0 {
 			maxDisplay = "max=unlimited"
 		}
-		w(fmt.Sprintf("  Pool:        %s (min=%d %s)", a.QualifiedName(), pool.Min, maxDisplay))
+		w(fmt.Sprintf("  Pool:        %s (min=%d %s)", a.QualifiedName(), sp.Min, maxDisplay))
 	} else {
 		w("  Agent:       " + a.QualifiedName() + " (fixed agent)")
 	}
 	sq := a.EffectiveSlingQuery()
 	w("  Sling query: " + sq)
 	if !isCustomSlingQuery(a) {
-		if a.IsPool() {
+		if isMultiSessionCfgAgent(&a) {
 			w("               Pool agents share a work queue via labels instead of")
 			w("               direct assignment. Any idle pool member can claim work")
 			w("               labeled for its pool.")

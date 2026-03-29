@@ -267,7 +267,7 @@ func graphFallbackBindingForBead(source beads.Bead, store beads.Store, cityName 
 	}
 
 	binding := graphRouteBinding{qualifiedName: agentCfg.QualifiedName()}
-	if agentCfg.IsPool() {
+	if isMultiSessionCfgAgent(&agentCfg) {
 		binding.label = "pool:" + agentCfg.QualifiedName()
 		return binding, nil
 	}

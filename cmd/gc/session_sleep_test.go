@@ -140,7 +140,7 @@ func TestWakeReasonsNonInteractiveImmediateUsesHardWakeReasons(t *testing.T) {
 func TestWakeReasons_DependencyOnlyFloorDoesNotGetWakeConfig(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "db", Pool: &config.PoolConfig{Min: 0, Max: 3}, Attach: boolPtr(false)},
+			{Name: "db", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), Attach: boolPtr(false)},
 			{Name: "api", Attach: boolPtr(false), DependsOn: []string{"db"}},
 		},
 	}

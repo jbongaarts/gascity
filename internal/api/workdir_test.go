@@ -31,7 +31,7 @@ func TestCanAttributeSessionRejectsSharedRigRootWhenClaudePoolExists(t *testing.
 		Rigs:      []config.Rig{{Name: "demo", Path: rigRoot}},
 		Agents: []config.Agent{
 			{Name: "refinery", Dir: "demo"},
-			{Name: "polecat", Dir: "demo", Pool: &config.PoolConfig{Min: 0, Max: 2}},
+			{Name: "polecat", Dir: "demo", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)},
 		},
 	}
 
@@ -48,10 +48,10 @@ func TestCanAttributeSessionRejectsSharedPoolTemplateEvenWhenItMentionsAgentIden
 		Agents: []config.Agent{
 			{Name: "refinery", Dir: "demo", WorkDir: ".gc/shared"},
 			{
-				Name:    "polecat",
-				Dir:     "demo",
-				WorkDir: `{{if .AgentBase}}.gc/shared{{end}}`,
-				Pool:    &config.PoolConfig{Min: 0, Max: 2},
+				Name:              "polecat",
+				Dir:               "demo",
+				WorkDir:           `{{if .AgentBase}}.gc/shared{{end}}`,
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2),
 			},
 		},
 	}
@@ -69,10 +69,10 @@ func TestCanAttributeSessionRejectsSharedSingleSlotPoolTemplate(t *testing.T) {
 		Agents: []config.Agent{
 			{Name: "observer", Dir: "demo", WorkDir: ".gc/shared/polecat"},
 			{
-				Name:    "polecat",
-				Dir:     "demo",
-				WorkDir: ".gc/shared/{{.AgentBase}}",
-				Pool:    &config.PoolConfig{Min: 0, Max: 1},
+				Name:              "polecat",
+				Dir:               "demo",
+				WorkDir:           ".gc/shared/{{.AgentBase}}",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(1),
 			},
 		},
 	}

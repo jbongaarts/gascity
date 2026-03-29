@@ -177,7 +177,7 @@ func TestWakeReasons_PoolWithinDesired(t *testing.T) {
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Pool: &config.PoolConfig{Min: 1, Max: 5}},
+			{Name: "worker", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5)},
 		},
 	}
 
@@ -201,7 +201,7 @@ func TestWakeReasons_PoolExceedsDesired(t *testing.T) {
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Pool: &config.PoolConfig{Min: 1, Max: 5}},
+			{Name: "worker", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5)},
 		},
 	}
 
@@ -259,7 +259,7 @@ func TestWakeReasons_DrainedSleepPoolSessionDoesNotGetWakeConfig(t *testing.T) {
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Pool: &config.PoolConfig{Min: 1, Max: 5}},
+			{Name: "worker", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5)},
 		},
 	}
 
@@ -306,7 +306,7 @@ func TestWakeReasons_DemandWakesSession(t *testing.T) {
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Pool: &config.PoolConfig{Min: 0, Max: 5}},
+			{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(5)},
 		},
 	}
 
@@ -414,7 +414,7 @@ func TestWakeReasons_WorkSetPoolSlotGated(t *testing.T) {
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "pooled", Pool: &config.PoolConfig{Min: 1, Max: 3}},
+			{Name: "pooled", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(3)},
 		},
 	}
 
@@ -459,7 +459,7 @@ func TestWakeReasons_DependencyOnlyPoolSlotDoesNotWakeOnWork(t *testing.T) {
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "pooled", Pool: &config.PoolConfig{Min: 0, Max: 3}},
+			{Name: "pooled", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3)},
 		},
 	}
 
@@ -483,7 +483,7 @@ func TestWakeReasons_ManualPoolSessionDoesNotGetWakeConfigAtZeroScale(t *testing
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "pooled", Pool: &config.PoolConfig{Min: 0, Max: 3}},
+			{Name: "pooled", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3)},
 		},
 	}
 
@@ -506,7 +506,7 @@ func TestWakeReasons_UsesLegacyAgentLabelTemplate(t *testing.T) {
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Dir: "frontend", Pool: &config.PoolConfig{Min: 1, Max: 3}},
+			{Name: "worker", Dir: "frontend", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(3)},
 		},
 	}
 
@@ -559,7 +559,7 @@ func TestComputeWorkSet_ResolvesRigDir(t *testing.T) {
 
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "polecat", Dir: "myrig", Pool: &config.PoolConfig{Min: 0, Max: 3}},
+			{Name: "polecat", Dir: "myrig", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3)},
 		},
 	}
 
@@ -584,7 +584,7 @@ func TestComputeWorkSet_UsesConfiguredRigRoot(t *testing.T) {
 	cfg := &config.City{
 		Rigs: []config.Rig{{Name: "myrig", Path: rigDir}},
 		Agents: []config.Agent{
-			{Name: "polecat", Dir: "myrig", Pool: &config.PoolConfig{Min: 0, Max: 3}},
+			{Name: "polecat", Dir: "myrig", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3)},
 		},
 	}
 
@@ -918,7 +918,7 @@ func TestSessionIsQuarantined(t *testing.T) {
 func TestIsPoolExcess(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{
-			{Name: "worker", Pool: &config.PoolConfig{Min: 1, Max: 5}},
+			{Name: "worker", MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5)},
 			{Name: "singleton"},
 		},
 	}
@@ -927,21 +927,17 @@ func TestIsPoolExcess(t *testing.T) {
 	tests := []struct {
 		name     string
 		template string
-		slot     string
 		want     bool
 	}{
-		{"within desired", "worker", "2", false},
-		{"at desired", "worker", "3", false},
-		{"exceeds desired", "worker", "4", true},
-		{"singleton", "singleton", "", false},
-		{"unknown template", "missing", "1", false},
+		{"demand exists", "worker", false},
+		{"no demand", "singleton", true},
+		{"unknown template", "missing", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			session := makeBead("b1", map[string]string{
-				"template":  tt.template,
-				"pool_slot": tt.slot,
+				"template": tt.template,
 			})
 			got := isPoolExcess(session, cfg, poolDesired)
 			if got != tt.want {

@@ -27,12 +27,8 @@ func TestBuildDesiredState_SingletonTemplateDoesNotRealizeDependencyPoolFloorWit
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "db",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "db",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 			{
 				Name:      "api",
@@ -59,20 +55,12 @@ func TestBuildDesiredState_DoesNotRealizeDependencyFloorForZeroScaledDependentPo
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "db",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "db",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 			{
-				Name: "api",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "api",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 				DependsOn: []string{"db"},
 			},
 		},
@@ -92,12 +80,8 @@ func TestBuildDesiredState_DoesNotRealizeDependencyFloorForSuspendedDependent(t 
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "db",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "db",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 			{
 				Name:      "api",
@@ -121,20 +105,12 @@ func TestBuildDesiredState_SingletonTemplatesDoNotRealizeTransitiveDependencyPoo
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "db",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "db",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 			{
-				Name: "api",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "api",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 				DependsOn: []string{"db"},
 			},
 			{
@@ -182,12 +158,8 @@ func TestBuildDesiredState_DiscoveredSessionRootGetsDependencyPoolFloor(t *testi
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "db",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "db",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 			{
 				Name:         "helper",
@@ -233,22 +205,14 @@ func TestBuildDesiredState_ManualZeroScaledPoolSessionStaysDesiredAndKeepsDepend
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "db",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "db",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 			{
-				Name:         "api",
-				DependsOn:    []string{"db"},
-				StartCommand: "echo",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "api",
+				DependsOn:         []string{"db"},
+				StartCommand:      "echo",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 		},
 	}
@@ -269,6 +233,49 @@ func TestBuildDesiredState_ManualZeroScaledPoolSessionStaysDesiredAndKeepsDepend
 	}
 }
 
+func TestBuildDesiredState_DrainedPoolManagedSessionIsNotRediscovered(t *testing.T) {
+	cityPath := t.TempDir()
+	store := beads.NewMemStore()
+	if _, err := store.Create(beads.Bead{
+		Title:  "claude",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel, "template:claude"},
+		Metadata: map[string]string{
+			"template":     "claude",
+			"agent_name":   "claude",
+			"session_name": "s-gc-drained",
+			"state":        "asleep",
+			"sleep_reason": "drained",
+			"pool_managed": "true",
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.City{
+		Agents: []config.Agent{{
+			Name:              "claude",
+			MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(5),
+		}},
+	}
+
+	dsResult := buildDesiredState("test-city", cityPath, time.Now().UTC(), cfg, runtime.NewFake(), store, io.Discard)
+	desired := dsResult.State
+
+	if _, ok := desired["s-gc-drained"]; ok {
+		t.Fatalf("drained pool-managed session should not be rediscovered into desired state")
+	}
+
+	claudeSessions := 0
+	for _, tp := range desired {
+		if tp.TemplateName == "claude" {
+			claudeSessions++
+		}
+	}
+	if claudeSessions != 1 {
+		t.Fatalf("claude desired sessions = %d, want 1", claudeSessions)
+	}
+}
+
 func TestBuildDesiredState_UsesBeadNamedPoolSessionsForRoutedWork(t *testing.T) {
 	cityPath := t.TempDir()
 	store := beads.NewMemStore()
@@ -283,8 +290,8 @@ func TestBuildDesiredState_UsesBeadNamedPoolSessionsForRoutedWork(t *testing.T) 
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "worker",
-				Pool: &config.PoolConfig{Min: 0, Max: 3, Check: "echo 1"},
+				Name:              "worker",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "echo 1",
 			},
 		},
 	}
@@ -335,8 +342,8 @@ func TestBuildDesiredState_FallsBackToLegacyPoolDemandWhenListFails(t *testing.T
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "worker",
-				Pool: &config.PoolConfig{Min: 1, Max: 1},
+				Name:              "worker",
+				MinActiveSessions: intPtr(1), MaxActiveSessions: intPtr(1),
 			},
 		},
 	}
@@ -396,8 +403,8 @@ func TestBuildDesiredState_DependencyFloorDoesNotReuseRegularPoolWorkerBead(t *t
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "worker",
-				Pool: &config.PoolConfig{Min: 0, Max: 3},
+				Name:              "worker",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3),
 			},
 			{
 				Name:         "helper",
@@ -448,8 +455,8 @@ func TestBuildDesiredState_DoesNotCreateDuplicatePoolBeadForDiscoveredSession(t 
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "worker",
-				Pool: &config.PoolConfig{Min: 0, Max: 3},
+				Name:              "worker",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3),
 			},
 		},
 	}
@@ -488,21 +495,13 @@ func TestBuildDesiredState_ZeroScaledPoolSessionKeepsDependencyFloorWhileDrainin
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name: "db",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "db",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 			{
-				Name:      "api",
-				DependsOn: []string{"db"},
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "api",
+				DependsOn:         []string{"db"},
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 		},
 	}
@@ -551,24 +550,16 @@ func TestBuildDesiredState_ManualPoolSessionInSuspendedRigStaysStopped(t *testin
 		}},
 		Agents: []config.Agent{
 			{
-				Name: "db",
-				Dir:  "payments",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "db",
+				Dir:               "payments",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 			{
-				Name:         "api",
-				Dir:          "payments",
-				DependsOn:    []string{"payments/db"},
-				StartCommand: "echo",
-				Pool: &config.PoolConfig{
-					Min:   0,
-					Max:   3,
-					Check: "printf 0",
-				},
+				Name:              "api",
+				Dir:               "payments",
+				DependsOn:         []string{"payments/db"},
+				StartCommand:      "echo",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(3), ScaleCheck: "printf 0",
 			},
 		},
 	}
@@ -604,10 +595,11 @@ func TestSelectOrCreatePoolSessionBead_SkipsDrained(t *testing.T) {
 	}
 	snapshot := &sessionBeadSnapshot{}
 	snapshot.add(drained)
+	cfgAgent := config.Agent{Name: "claude", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(5)}
 	bp := &agentBuildParams{
 		beadStore:    store,
 		sessionBeads: snapshot,
-		agents:       []config.Agent{{Name: "claude", Pool: &config.PoolConfig{Min: 0, Max: 5}}},
+		agents:       []config.Agent{cfgAgent},
 	}
 
 	result, err := selectOrCreatePoolSessionBead(bp, "claude", nil, map[string]bool{})
@@ -638,10 +630,11 @@ func TestSelectOrCreatePoolSessionBead_ReusesPreferredDrained(t *testing.T) {
 	}
 	snapshot := &sessionBeadSnapshot{}
 	snapshot.add(drained)
+	cfgAgent := config.Agent{Name: "claude", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(5)}
 	bp := &agentBuildParams{
 		beadStore:    store,
 		sessionBeads: snapshot,
-		agents:       []config.Agent{{Name: "claude", Pool: &config.PoolConfig{Min: 0, Max: 5}}},
+		agents:       []config.Agent{cfgAgent},
 	}
 
 	result, err := selectOrCreatePoolSessionBead(bp, "claude", &drained, map[string]bool{})
@@ -650,6 +643,43 @@ func TestSelectOrCreatePoolSessionBead_ReusesPreferredDrained(t *testing.T) {
 	}
 	if result.ID != drained.ID {
 		t.Fatal("resume tier should reuse preferred drained session bead")
+	}
+}
+
+func TestSelectOrCreateDependencyPoolSessionBead_SkipsDrained(t *testing.T) {
+	store := beads.NewMemStore()
+	drained, err := store.Create(beads.Bead{
+		Title:  "claude",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"template":        "claude",
+			"agent_name":      "claude",
+			"session_name":    "claude-dep-drained",
+			"state":           "asleep",
+			"sleep_reason":    "drained",
+			"dependency_only": "true",
+			"pool_managed":    "true",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := &sessionBeadSnapshot{}
+	snapshot.add(drained)
+	cfgAgent := config.Agent{Name: "claude", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(5)}
+	bp := &agentBuildParams{
+		beadStore:    store,
+		sessionBeads: snapshot,
+		agents:       []config.Agent{cfgAgent},
+	}
+
+	result, err := selectOrCreateDependencyPoolSessionBead(bp, &cfgAgent, "claude")
+	if err != nil {
+		t.Fatalf("selectOrCreateDependencyPoolSessionBead: %v", err)
+	}
+	if result.ID == drained.ID {
+		t.Fatal("should not reuse drained dependency session bead for generic dependency demand")
 	}
 }
 
@@ -674,10 +704,11 @@ func TestSelectOrCreatePoolSessionBead_ReusesAvailableForNewTier(t *testing.T) {
 	}
 	snapshot := &sessionBeadSnapshot{}
 	snapshot.add(awake)
+	cfgAgent := config.Agent{Name: "claude", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(5)}
 	bp := &agentBuildParams{
 		beadStore:    store,
 		sessionBeads: snapshot,
-		agents:       []config.Agent{{Name: "claude", Pool: &config.PoolConfig{Min: 0, Max: 5}}},
+		agents:       []config.Agent{cfgAgent},
 	}
 
 	result, err := selectOrCreatePoolSessionBead(bp, "claude", nil, map[string]bool{})

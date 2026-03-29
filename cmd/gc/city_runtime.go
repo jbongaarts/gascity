@@ -652,7 +652,7 @@ func sweepUndesiredPoolSessionBeads(
 		}
 		template := normalizedSessionTemplate(bead, cfg)
 		agentCfg := findAgentByTemplate(cfg, template)
-		if agentCfg == nil || agentCfg.Pool == nil {
+		if agentCfg == nil || !isMultiSessionCfgAgent(agentCfg) {
 			continue
 		}
 		candidates = append(candidates, bead)

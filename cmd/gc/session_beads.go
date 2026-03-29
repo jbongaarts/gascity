@@ -187,7 +187,7 @@ func syncSessionBeadsWithSnapshot(
 			agentName = tp.InstanceName
 		}
 		cfgAgent := findAgentByTemplate(cfg, tp.TemplateName)
-		isManagedPool := cfgAgent != nil && cfgAgent.Pool != nil && !tp.ManualSession
+		isManagedPool := cfgAgent != nil && isMultiSessionCfgAgent(cfgAgent) && !tp.ManualSession
 
 		b, exists := bySessionName[sn]
 		if !exists {
@@ -548,7 +548,7 @@ func syncSessionBeadsWithSnapshot(
 				if cfg != nil {
 					template := strings.TrimSpace(b.Metadata["template"])
 					if template != "" {
-						if agentCfg := config.FindAgent(cfg, template); agentCfg != nil && !agentCfg.IsPool() && config.FindNamedSession(cfg, template) == nil {
+						if agentCfg := config.FindAgent(cfg, template); agentCfg != nil && !isMultiSessionCfgAgent(agentCfg) && config.FindNamedSession(cfg, template) == nil {
 							fmt.Fprintf(stderr, "session beads: plain template session %s (%s) is no longer controller-managed; declare [[named_session]] to keep a canonical alias-backed session\n", b.ID, template) //nolint:errcheck
 						}
 					}
@@ -584,7 +584,7 @@ func syncDesiredPoolSlots(
 			continue
 		}
 		agentCfg := findAgentByTemplate(cfg, tp.TemplateName)
-		if agentCfg == nil || agentCfg.Pool == nil {
+		if agentCfg == nil || !isMultiSessionCfgAgent(agentCfg) {
 			continue
 		}
 		desiredByTemplate[tp.TemplateName] = append(desiredByTemplate[tp.TemplateName], sn)
@@ -673,7 +673,7 @@ func configuredSessionNamesWithSnapshot(cfg *config.City, cityName string, sessi
 	st := cfg.Workspace.SessionTemplate
 	names := make(map[string]bool, len(cfg.Agents)+len(cfg.NamedSessions))
 	for _, a := range cfg.Agents {
-		if a.IsPool() {
+		if isMultiSessionCfgAgent(&a) {
 			// Pool agents: use legacy SessionNameFor for the tmux-sanitized
 			// base template name (e.g., "my-rig/worker" → "my-rig--worker").
 			// We intentionally skip bead lookup because findSessionNameByTemplate
@@ -762,7 +762,7 @@ func resolveAgentTemplate(agentName string, cfg *config.City) string {
 	// Pool instance: name matches "{template}-{slot}".
 	for _, a := range cfg.Agents {
 		qn := a.QualifiedName()
-		if a.IsPool() && strings.HasPrefix(agentName, qn+"-") {
+		if isMultiSessionCfgAgent(&a) && strings.HasPrefix(agentName, qn+"-") {
 			suffix := agentName[len(qn)+1:]
 			if _, err := strconv.Atoi(suffix); err == nil {
 				return qn

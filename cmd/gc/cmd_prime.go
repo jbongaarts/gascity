@@ -165,7 +165,7 @@ func doPrimeWithMode(args []string, stdout, _ io.Writer, hookMode bool) int { //
 			promptFile := ""
 			if cfg.Daemon.GraphWorkflows {
 				promptFile = "prompts/graph-worker.md"
-			} else if a.IsPool() || isPoolInstance(cfg, a) {
+			} else if isMultiSessionCfgAgent(&a) || isPoolInstance(cfg, a) {
 				promptFile = "prompts/pool-worker.md"
 			}
 			if promptFile != "" {
@@ -262,7 +262,8 @@ func persistPrimeHookSessionID(sessionID string) {
 // matches a configured pool agent in the same dir.
 func isPoolInstance(cfg *config.City, a config.Agent) bool {
 	for _, ca := range cfg.Agents {
-		if ca.Pool == nil || !ca.Pool.IsMultiInstance() {
+		sp := scaleParamsFor(&ca)
+		if sp.Max == 1 {
 			continue
 		}
 		if ca.Dir != a.Dir {
@@ -289,11 +290,13 @@ func findAgentByName(cfg *config.City, name string) (config.Agent, bool) {
 	}
 	// Pool suffix stripping: "polecat-3" → try "polecat" if it's a pool.
 	for _, a := range cfg.Agents {
-		if a.Pool != nil && a.Pool.IsMultiInstance() {
+		sp := scaleParamsFor(&a)
+		if sp.Max != 1 {
 			prefix := a.Name + "-"
 			if strings.HasPrefix(name, prefix) {
 				suffix := name[len(prefix):]
-				if n, err := strconv.Atoi(suffix); err == nil && n >= 1 && (a.Pool.IsUnlimited() || n <= a.Pool.Max) {
+				isUnlimited := sp.Max < 0
+				if n, err := strconv.Atoi(suffix); err == nil && n >= 1 && (isUnlimited || n <= sp.Max) {
 					return a, true
 				}
 			}

@@ -841,9 +841,9 @@ func TestDiscoverSessionBeads_SkipsPoolAgentWithZeroDesired(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name:         "polecat",
-				StartCommand: "echo",
-				Pool:         &config.PoolConfig{Min: 0, Max: -1},
+				Name:              "polecat",
+				StartCommand:      "echo",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(-1),
 			},
 		},
 	}
@@ -884,9 +884,9 @@ func TestDiscoverSessionBeads_IncludesPoolAgentWithDesired(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{
 			{
-				Name:         "polecat",
-				StartCommand: "echo",
-				Pool:         &config.PoolConfig{Min: 0, Max: -1},
+				Name:              "polecat",
+				StartCommand:      "echo",
+				MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(-1),
 			},
 		},
 	}
@@ -1908,11 +1908,11 @@ check = "echo 3"
 	if cfg.Agents[1].Name != "worker" {
 		t.Errorf("Agents[1].Name = %q, want %q", cfg.Agents[1].Name, "worker")
 	}
-	if cfg.Agents[1].Pool == nil {
-		t.Fatal("Agents[1].Pool is nil, want non-nil")
+	if cfg.Agents[1].MaxActiveSessions == nil {
+		t.Fatal("Agents[1].MaxActiveSessions is nil, want non-nil")
 	}
-	if cfg.Agents[1].Pool.Max != 5 {
-		t.Errorf("Agents[1].Pool.Max = %d, want 5", cfg.Agents[1].Pool.Max)
+	if *cfg.Agents[1].MaxActiveSessions != 5 {
+		t.Errorf("Agents[1].MaxActiveSessions = %d, want 5", *cfg.Agents[1].MaxActiveSessions)
 	}
 }
 

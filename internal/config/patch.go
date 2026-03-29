@@ -310,29 +310,25 @@ func applyAgentPatchFields(a *Agent, p *AgentPatch) {
 	}
 }
 
-// applyPoolOverride applies pool sub-field patches. Creates the PoolConfig
-// if the agent doesn't have one yet.
+// applyPoolOverride maps legacy pool override fields to the new Agent fields.
 func applyPoolOverride(a *Agent, po *PoolOverride) {
-	if a.Pool == nil {
-		a.Pool = &PoolConfig{}
-	}
 	if po.Min != nil {
-		a.Pool.Min = *po.Min
+		a.MinActiveSessions = po.Min
 	}
 	if po.Max != nil {
-		a.Pool.Max = *po.Max
+		a.MaxActiveSessions = po.Max
 	}
 	if po.Check != nil {
-		a.Pool.Check = *po.Check
+		a.ScaleCheck = *po.Check
 	}
 	if po.DrainTimeout != nil {
-		a.Pool.DrainTimeout = *po.DrainTimeout
+		a.DrainTimeout = *po.DrainTimeout
 	}
 	if po.OnDeath != nil {
-		a.Pool.OnDeath = *po.OnDeath
+		a.OnDeath = *po.OnDeath
 	}
 	if po.OnBoot != nil {
-		a.Pool.OnBoot = *po.OnBoot
+		a.OnBoot = *po.OnBoot
 	}
 }
 

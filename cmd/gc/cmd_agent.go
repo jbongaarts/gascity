@@ -97,7 +97,8 @@ func resolveAgentIdentity(cfg *config.City, input, currentRigDir string) (config
 // by matching against each pool agent's QualifiedName() + instance suffix.
 func resolvePoolInstance(cfg *config.City, input string) (config.Agent, bool) {
 	for _, a := range cfg.Agents {
-		if a.Pool == nil || !a.Pool.IsMultiInstance() {
+		sp := scaleParamsFor(&a)
+		if sp.Max == 1 {
 			continue
 		}
 		prefix := a.QualifiedName() + "-"
@@ -109,7 +110,8 @@ func resolvePoolInstance(cfg *config.City, input string) (config.Agent, bool) {
 		if err != nil || n < 1 {
 			continue
 		}
-		if !a.Pool.IsUnlimited() && n > a.Pool.Max {
+		isUnlimited := sp.Max < 0
+		if !isUnlimited && n > sp.Max {
 			continue
 		}
 		instance := deepCopyAgent(&a, a.Name+"-"+suffix, a.Dir)
@@ -118,10 +120,11 @@ func resolvePoolInstance(cfg *config.City, input string) (config.Agent, bool) {
 	return config.Agent{}, false
 }
 
-// matchPoolInstance checks if input matches a pool agent's instance pattern
-// (e.g., "polecat-2" matches pool "polecat"). Returns the synthesized instance.
+// matchPoolInstance checks if input matches a multi-session agent's instance
+// pattern (e.g., "polecat-2" matches agent "polecat"). Returns the synthesized instance.
 func matchPoolInstance(a config.Agent, input string) (config.Agent, bool) {
-	if a.Pool == nil || !a.Pool.IsMultiInstance() {
+	sp := scaleParamsFor(&a)
+	if sp.Max == 1 {
 		return config.Agent{}, false
 	}
 	prefix := a.Name + "-"
@@ -133,7 +136,8 @@ func matchPoolInstance(a config.Agent, input string) (config.Agent, bool) {
 	if err != nil || n < 1 {
 		return config.Agent{}, false
 	}
-	if !a.Pool.IsUnlimited() && n > a.Pool.Max {
+	isUnlimited := sp.Max < 0
+	if !isUnlimited && n > sp.Max {
 		return config.Agent{}, false
 	}
 	instance := deepCopyAgent(&a, input, a.Dir)
