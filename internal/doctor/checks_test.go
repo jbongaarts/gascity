@@ -893,7 +893,7 @@ func TestSystemFormulasCheckOK(t *testing.T) {
 
 func TestSystemFormulasCheckOrdersOK(t *testing.T) {
 	dir := setupCity(t, "[workspace]\nname = \"test\"\n")
-	ordersDir := filepath.Join(dir, "orders", "orders", "health")
+	ordersDir := filepath.Join(dir, "orders", "health")
 	if err := os.MkdirAll(ordersDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

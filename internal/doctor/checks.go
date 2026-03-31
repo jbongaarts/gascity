@@ -1063,7 +1063,7 @@ func (c *SystemFormulasCheck) Name() string { return "system-formulas" }
 // formulas resolve under formulas/.
 func (c *SystemFormulasCheck) systemFileAbsPath(rel string) string {
 	if strings.HasPrefix(rel, "orders/") {
-		return filepath.Join(c.CityPath, citylayout.OrdersRoot, rel)
+		return filepath.Join(c.CityPath, citylayout.OrdersRoot, strings.TrimPrefix(rel, "orders/"))
 	}
 	return filepath.Join(c.CityPath, citylayout.FormulasRoot, rel)
 }

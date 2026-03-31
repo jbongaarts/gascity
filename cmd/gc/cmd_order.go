@@ -264,6 +264,19 @@ func cityOrderRoots(cityPath string, cfg *config.City) []orders.ScanRoot {
 			FormulaLayer: layer,
 		})
 	}
+
+	// Also scan pack formula dirs (system + user packs via PackDirs).
+	// injectBuiltinPacks adds system packs to PackDirs but not to
+	// FormulaLayers.City, so orders in those packs would otherwise be
+	// invisible to the CLI and API.
+	for _, packDir := range cfg.PackDirs {
+		formulaLayer := filepath.Join(packDir, "formulas")
+		appendRoot(orders.ScanRoot{
+			Dir:          filepath.Join(formulaLayer, "orders"),
+			FormulaLayer: formulaLayer,
+		})
+	}
+
 	return roots
 }
 

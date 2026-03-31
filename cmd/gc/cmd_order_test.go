@@ -109,6 +109,61 @@ func TestCityOrderRootsDedupesLegacyLocalRoot(t *testing.T) {
 	}
 }
 
+func TestCityOrderRootsIncludesPackDirs(t *testing.T) {
+	cityDir := t.TempDir()
+
+	// Create a pack with a formulas/orders dir.
+	packDir := filepath.Join(cityDir, "packs", "maintenance")
+	ordersDir := filepath.Join(packDir, "formulas", "orders")
+	if err := os.MkdirAll(ordersDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{}
+	cfg.PackDirs = []string{packDir}
+
+	roots := cityOrderRoots(cityDir, cfg)
+
+	for _, root := range roots {
+		if root.Dir == ordersDir {
+			wantLayer := filepath.Join(packDir, "formulas")
+			if root.FormulaLayer != wantLayer {
+				t.Fatalf("FormulaLayer = %q, want %q", root.FormulaLayer, wantLayer)
+			}
+			return
+		}
+	}
+	t.Fatalf("cityOrderRoots() missing pack order root %q; got %v", ordersDir, roots)
+}
+
+func TestCityOrderRootsPackDirsDedupe(t *testing.T) {
+	cityDir := t.TempDir()
+
+	// Pack whose formulas dir is also a formula layer already.
+	packDir := filepath.Join(cityDir, "packs", "alpha")
+	formulasDir := filepath.Join(packDir, "formulas")
+	if err := os.MkdirAll(filepath.Join(formulasDir, "orders"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{}
+	cfg.FormulaLayers.City = []string{formulasDir}
+	cfg.PackDirs = []string{packDir}
+
+	roots := cityOrderRoots(cityDir, cfg)
+
+	ordersDir := filepath.Join(formulasDir, "orders")
+	var count int
+	for _, root := range roots {
+		if root.Dir == ordersDir {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("pack order root appeared %d times, want 1 (dedup)", count)
+	}
+}
+
 // --- gc order show ---
 
 func TestOrderShow(t *testing.T) {
