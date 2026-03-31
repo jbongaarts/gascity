@@ -135,7 +135,7 @@ func (c *CachingStore) Prime(_ context.Context) error {
 	var all []Bead
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
-		all, err = c.backing.List()
+		all, err = c.backing.List() // non-closed beads only (default)
 		if err == nil {
 			break
 		}
