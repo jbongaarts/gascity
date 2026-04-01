@@ -762,6 +762,190 @@ func TestRegression_AsleepEphemeralWithAssignedWork_WakesViaAssignedWork(t *test
 	}
 }
 
+// ---------------------------------------------------------------------------
+// WorkSet — work_query demand signal (defense-in-depth alongside ScaleCheck)
+// ---------------------------------------------------------------------------
+
+func TestWorkSet_WakesOneSession_WhenScaleCheckZero(t *testing.T) {
+	// work_query sees work but scale_check hasn't caught up (count=0).
+	// WorkSet should wake exactly one active session.
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active"},
+			{ID: "mc-2", SessionName: "polecat-mc-2", Template: "hello-world/polecat", State: "active"},
+		},
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0},
+		WorkSet:          map[string]bool{"hello-world/polecat": true},
+		RunningSessions:  map[string]bool{"polecat-mc-1": true, "polecat-mc-2": true},
+		Now:              now,
+	})
+	awake := 0
+	for _, d := range result {
+		if d.ShouldWake {
+			awake++
+		}
+	}
+	if awake != 1 {
+		t.Errorf("WorkSet should wake exactly 1 session, got %d", awake)
+	}
+}
+
+func TestWorkSet_ReasonIsWorkQuery(t *testing.T) {
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active"},
+		},
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0},
+		WorkSet:          map[string]bool{"hello-world/polecat": true},
+		RunningSessions:  map[string]bool{"polecat-mc-1": true},
+		Now:              now,
+	})
+	assertAwake(t, result, "polecat-mc-1")
+	assertReason(t, result, "polecat-mc-1", "work-query")
+}
+
+func TestWorkSet_NoOpWhenScaleCheckCovers(t *testing.T) {
+	// When ScaleCheckCounts already covers the template, WorkSet shouldn't
+	// add extra sessions — ScaleCheck is the authoritative count.
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active"},
+			{ID: "mc-2", SessionName: "polecat-mc-2", Template: "hello-world/polecat", State: "active"},
+		},
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 1},
+		WorkSet:          map[string]bool{"hello-world/polecat": true},
+		RunningSessions:  map[string]bool{"polecat-mc-1": true, "polecat-mc-2": true},
+		Now:              now,
+	})
+	awake := 0
+	for _, d := range result {
+		if d.ShouldWake {
+			awake++
+		}
+	}
+	if awake != 1 {
+		t.Errorf("ScaleCheck=1 should cap to 1, WorkSet should not add more, got %d awake", awake)
+	}
+	// The awake session should have reason "scaled:demand", not "work-query"
+	assertReason(t, result, "polecat-mc-1", "scaled:demand")
+}
+
+func TestWorkSet_SkipsDependencyOnly(t *testing.T) {
+	// dependency_only sessions should NOT be woken by WorkSet.
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active", DependencyOnly: true},
+		},
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0},
+		WorkSet:          map[string]bool{"hello-world/polecat": true},
+		RunningSessions:  map[string]bool{"polecat-mc-1": true},
+		Now:              now,
+	})
+	assertAsleep(t, result, "polecat-mc-1")
+}
+
+func TestWorkSet_SkipsDrained(t *testing.T) {
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active", Drained: true},
+		},
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0},
+		WorkSet:          map[string]bool{"hello-world/polecat": true},
+		Now:              now,
+	})
+	assertAsleep(t, result, "polecat-mc-1")
+}
+
+func TestWorkSet_SkipsSuspendedAgent(t *testing.T) {
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat", Suspended: true}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active"},
+		},
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0},
+		WorkSet:          map[string]bool{"hello-world/polecat": true},
+		RunningSessions:  map[string]bool{"polecat-mc-1": true},
+		Now:              now,
+	})
+	assertAsleep(t, result, "polecat-mc-1")
+}
+
+func TestWorkSet_SkipsNamedSessionTemplate(t *testing.T) {
+	// Named sessions wake via assignee, not WorkSet.
+	result := ComputeAwakeSet(AwakeInput{
+		Agents:        []AwakeAgent{{QualifiedName: "hello-world/refinery"}},
+		NamedSessions: []AwakeNamedSession{{Identity: "hello-world/refinery", Template: "hello-world/refinery", Mode: "on_demand"}},
+		SessionBeads:  []AwakeSessionBead{{ID: "mc-1", SessionName: "hello-world--refinery", Template: "hello-world/refinery", State: "asleep", NamedIdentity: "hello-world/refinery"}},
+		WorkSet:       map[string]bool{"hello-world/refinery": true},
+		Now:           now,
+	})
+	assertAsleep(t, result, "hello-world--refinery")
+}
+
+func TestWorkSet_FallsBackToCreating(t *testing.T) {
+	// When no active sessions exist, WorkSet should wake a creating one.
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "creating"},
+		},
+		WorkSet: map[string]bool{"hello-world/polecat": true},
+		Now:     now,
+	})
+	assertAwake(t, result, "polecat-mc-1")
+	assertReason(t, result, "polecat-mc-1", "work-query")
+}
+
+func TestWorkSet_FalseValue_NoEffect(t *testing.T) {
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active"},
+		},
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0},
+		WorkSet:          map[string]bool{"hello-world/polecat": false},
+		RunningSessions:  map[string]bool{"polecat-mc-1": true},
+		Now:              now,
+	})
+	assertAsleep(t, result, "polecat-mc-1")
+}
+
+func TestWorkSet_NilMap_NoEffect(t *testing.T) {
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active"},
+		},
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0},
+		RunningSessions:  map[string]bool{"polecat-mc-1": true},
+		Now:              now,
+	})
+	assertAsleep(t, result, "polecat-mc-1")
+}
+
+func TestWorkSet_SuppressedByHeldUntil(t *testing.T) {
+	// HeldUntil suppresses all wake reasons including WorkSet
+	// (step 5 hold override in ComputeAwakeSet).
+	result := ComputeAwakeSet(AwakeInput{
+		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
+		SessionBeads: []AwakeSessionBead{
+			{
+				ID: "mc-1", SessionName: "polecat-mc-1", Template: "hello-world/polecat", State: "active",
+				HeldUntil: now.Add(5 * time.Minute),
+			},
+		},
+		WorkSet:         map[string]bool{"hello-world/polecat": true},
+		RunningSessions: map[string]bool{"polecat-mc-1": true},
+		Now:             now,
+	})
+	assertAsleep(t, result, "polecat-mc-1")
+}
+
 func TestRegression_AsleepEphemeralWithoutWork_StaysAsleep(t *testing.T) {
 	// An asleep polecat WITHOUT assigned work should NOT wake, even with
 	// scaleCheck demand. A fresh session should be created instead.

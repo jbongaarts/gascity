@@ -14,6 +14,7 @@ type AwakeInput struct {
 	SessionBeads     []AwakeSessionBead
 	WorkBeads        []AwakeWorkBead
 	ScaleCheckCounts map[string]int  // agent template → desired count
+	WorkSet          map[string]bool // agent template → work_query found pending work
 	RunningSessions  map[string]bool // session name → tmux exists
 	AttachedSessions map[string]bool // session name → user attached
 	PendingSessions  map[string]bool // session name → pending interaction
@@ -141,6 +142,34 @@ func ComputeAwakeSet(input AwakeInput) map[string]AwakeDecision {
 			}
 			desired[bead.SessionName] = "scaled:creating"
 			filled++
+		}
+	}
+
+	// WorkSet: defense-in-depth wake signal from work_query.
+	// When work_query sees pending work but ScaleCheckCounts hasn't caught up
+	// (count is 0 or absent), wake exactly one session to handle it. This
+	// avoids thundering herd — scale_check will catch up on the next tick.
+	for template, hasWork := range input.WorkSet {
+		if !hasWork {
+			continue
+		}
+		if input.ScaleCheckCounts[template] > 0 {
+			continue // ScaleCheck already covers this template
+		}
+		agent, ok := agentsByName[template]
+		if !ok || agent.Suspended {
+			continue
+		}
+		if isNamedSessionTemplate(input.NamedSessions, template) {
+			continue // named sessions wake via assignee
+		}
+		// collectActiveBeads already excludes DependencyOnly and Drained
+		if active := collectActiveBeads(input.SessionBeads, template); len(active) > 0 {
+			desired[active[0].SessionName] = "work-query"
+			continue
+		}
+		if creating := collectCreatingBeads(input.SessionBeads, template); len(creating) > 0 {
+			desired[creating[0].SessionName] = "work-query"
 		}
 	}
 

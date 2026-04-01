@@ -122,6 +122,7 @@ func reconcileSessionBeads(
 	readyWaitSet map[string]bool,
 	dt *drainTracker,
 	poolDesired map[string]int,
+	workSet map[string]bool,
 	cityName string,
 	it idleTracker,
 	clk clock.Clock,
@@ -432,7 +433,7 @@ func reconcileSessionBeads(
 
 	// Use ComputeAwakeSet for the wake/sleep decision.
 	awakeInput := buildAwakeInputFromReconciler(
-		cfg, ordered, poolDesired, readyWaitSet,
+		cfg, ordered, poolDesired, workSet, readyWaitSet,
 		assignedWorkBeads, wakeTargets, sp, clk.Now(),
 	)
 	awakeDecisions := ComputeAwakeSet(awakeInput)

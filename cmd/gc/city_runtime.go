@@ -293,8 +293,8 @@ func (cr *CityRuntime) run(ctx context.Context) {
 			cr.tick(ctx, dirty, &lastProviderName, cityRoot, &prevPoolRunning)
 		case <-cr.pokeCh:
 			// Event-driven wake path: sling or API assigned work to a sleeping
-			// session. Trigger an immediate tick so the reconciler computes
-			// workSet and wakes the target without waiting for the next patrol.
+			// session. Trigger an immediate tick so the reconciler sees the new
+			// work via workSet/poolDesired and wakes the target promptly.
 			cr.tick(ctx, dirty, &lastProviderName, cityRoot, &prevPoolRunning)
 		case <-cr.controlDispatcherCh:
 			cr.controlDispatcherTick(ctx)
@@ -626,10 +626,15 @@ func (cr *CityRuntime) beadReconcileTick(ctx context.Context, result DesiredStat
 		readyWaitSet = nil
 	}
 
+	// workSet: defense-in-depth wake signal from work_query. When work_query
+	// detects pending work but scale_check hasn't caught up yet, workSet
+	// ensures at least one session wakes without waiting for the next tick.
+	workSet := computeWorkSet(cr.cfg, shellScaleCheck, cityName, cr.cityPath, store, sessionBeads)
+
 	reconcileSessionBeads(
 		ctx, open, desiredState, cfgNames, cr.cfg, cr.sp, store,
 		cr.dops,
-		result.AssignedWorkBeads, readyWaitSet, cr.sessionDrains, poolDesired, cityName,
+		result.AssignedWorkBeads, readyWaitSet, cr.sessionDrains, poolDesired, workSet, cityName,
 		cr.it, clock.Real{}, cr.rec, cr.cfg.Session.StartupTimeoutDuration(),
 		cr.cfg.Daemon.DriftDrainTimeoutDuration(),
 		cr.stdout, cr.stderr,
@@ -723,10 +728,11 @@ func (cr *CityRuntime) controlDispatcherTick(ctx context.Context) {
 		cr.sp,
 		store,
 		cr.dops,
-		nil, // workSet removed — poolDesired gates wake decisions
+		nil,
 		nil,
 		cr.sessionDrains,
 		poolDesired,
+		nil, // workSet: not computed for config-change reconcile
 		cr.cityName,
 		cr.it,
 		clock.Real{},

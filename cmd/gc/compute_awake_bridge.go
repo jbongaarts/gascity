@@ -16,6 +16,7 @@ func buildAwakeInputFromReconciler(
 	cfg *config.City,
 	sessionBeads []beads.Bead,
 	poolDesired map[string]int,
+	workSet map[string]bool,
 	readyWaitSet map[string]bool,
 	assignedWorkBeads []beads.Bead,
 	wakeTargets []wakeTarget,
@@ -24,6 +25,7 @@ func buildAwakeInputFromReconciler(
 ) AwakeInput {
 	input := AwakeInput{
 		ScaleCheckCounts: poolDesired,
+		WorkSet:          workSet,
 		ReadyWaitSet:     readyWaitSet,
 		RunningSessions:  make(map[string]bool),
 		AttachedSessions: make(map[string]bool),
@@ -131,6 +133,8 @@ func awakeSetToWakeEvals(decisions map[string]AwakeDecision, sessionBeads []Awak
 				reasons = []WakeReason{WakePending}
 			case "wait-ready":
 				reasons = []WakeReason{WakeWait}
+			case "work-query":
+				reasons = []WakeReason{WakeWork}
 			default:
 				reasons = []WakeReason{WakeConfig}
 			}
