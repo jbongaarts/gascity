@@ -42,7 +42,7 @@ func TestCollectAssignedWorkBeads_IncludesReadyOpenAssignedHandoff(t *testing.T)
 		t.Fatalf("create queued bead: %v", err)
 	}
 
-	got := collectAssignedWorkBeads(&config.City{}, store, nil, nil)
+	got, _ := collectAssignedWorkBeads(&config.City{}, store, nil, nil)
 	if len(got) != 1 {
 		t.Fatalf("collectAssignedWorkBeads returned %d beads, want 1: %#v", len(got), got)
 	}
@@ -77,7 +77,7 @@ func TestCollectAssignedWorkBeads_ExcludesBlockedOpenAssignedHandoff(t *testing.
 		t.Fatalf("add blocking dep: %v", err)
 	}
 
-	got := collectAssignedWorkBeads(&config.City{}, store, nil, nil)
+	got, _ := collectAssignedWorkBeads(&config.City{}, store, nil, nil)
 	if len(got) != 0 {
 		t.Fatalf("collectAssignedWorkBeads returned %d beads, want 0: %#v", len(got), got)
 	}
@@ -102,7 +102,7 @@ func TestCollectAssignedWorkBeads_IncludesRoutedToMetadataBeads(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("create unrouted bead: %v", err)
 	}
-	got := collectAssignedWorkBeads(&config.City{}, store, nil, nil)
+	got, _ := collectAssignedWorkBeads(&config.City{}, store, nil, nil)
 	if len(got) != 1 {
 		t.Fatalf("collectAssignedWorkBeads returned %d beads, want 1", len(got))
 	}

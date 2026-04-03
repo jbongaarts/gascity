@@ -624,8 +624,8 @@ func (s *BdStore) Delete(id string) error {
 	return nil
 }
 
-// List returns non-closed beads via bd list. Pass a status to filter further.
-func (s *BdStore) List(status ...string) ([]Bead, error) {
+// ListOpen returns non-closed beads via bd list. Pass a status to filter further.
+func (s *BdStore) ListOpen(status ...string) ([]Bead, error) {
 	args := []string{"list", "--json", "--limit", "0", "--include-infra"}
 	if len(status) > 0 && status[0] != "" {
 		args = append(args, "--status="+status[0])
@@ -702,10 +702,10 @@ func (s *BdStore) ListByMetadata(filters map[string]string, limit int) ([]Bead, 
 }
 
 // Children returns all beads whose ParentID matches the given ID. The bd CLI
-// does not know about ParentID, so this filters List() results client-side.
+// does not know about ParentID, so this filters ListOpen() results client-side.
 // Returns empty for now since Tutorial 06 uses FileStore.
 func (s *BdStore) Children(parentID string) ([]Bead, error) {
-	all, err := s.List()
+	all, err := s.ListOpen()
 	if err != nil {
 		return nil, err
 	}

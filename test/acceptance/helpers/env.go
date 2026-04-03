@@ -29,6 +29,7 @@ func NewEnv(gcBinary, gcHome, runtimeDir string) *Env {
 	for _, key := range []string{
 		"PATH", "TMPDIR", "LANG", "LC_ALL", "USER",
 		"SHELL", "SSH_AUTH_SOCK", "TERM",
+		"CLAUDE_CONFIG_DIR", // Claude Code reads OAuth credentials from here
 	} {
 		if v := os.Getenv(key); v != "" {
 			e.vars[key] = v

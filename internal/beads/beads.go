@@ -117,7 +117,7 @@ type Store interface {
 	// returns all beads. With a status argument (e.g., "in_progress"),
 	// returns only beads matching that status. In-process stores return
 	// creation order; external stores may not guarantee order.
-	List(status ...string) ([]Bead, error)
+	ListOpen(status ...string) ([]Bead, error)
 
 	// Ready returns all beads with status "open". Same ordering note
 	// as List.

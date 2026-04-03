@@ -124,8 +124,8 @@ func (s *prefixedAliasStore) CloseAll(ids []string, metadata map[string]string) 
 	return s.base.CloseAll(mapped, metadata)
 }
 
-func (s *prefixedAliasStore) List(status ...string) ([]beads.Bead, error) {
-	items, err := s.base.List(status...)
+func (s *prefixedAliasStore) ListOpen(status ...string) ([]beads.Bead, error) {
+	items, err := s.base.ListOpen(status...)
 	if err != nil {
 		return nil, err
 	}
