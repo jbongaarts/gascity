@@ -102,7 +102,7 @@ name = "polecat"
 scope = "rig"
 work_dir = ".gc/worktrees/{{.Rig}}/polecats/{{.AgentBase}}"
 prompt_template = "prompts/polecat.md.tmpl"
-nudge = "Check assigned work first: bd list --assignee=$GC_AGENT --status=in_progress; if empty, check the pool hook."
+nudge = "Run gc hook; it checks assigned work first, then routed pool work."
 overlay_dir = "overlays/default"
 pre_start = ["{{.ConfigDir}}/scripts/worktree-setup.sh {{.RigRoot}} {{.WorkDir}} {{.AgentBase}} --sync"]
 idle_timeout = "2h"

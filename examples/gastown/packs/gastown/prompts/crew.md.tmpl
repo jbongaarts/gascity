@@ -208,15 +208,16 @@ directly to another agent's Claude Code session via tmux.
 **Common patterns:**
 ```bash
 gc nudge {{ .RigName }}/crew/alice "Check your mail - PR review waiting"
-gc nudge {{ .RigName }}/polecat-1 "Check assigned work first, then the pool if empty"
+gc nudge {{ .RigName }}/<polecat-name> "Run gc hook; it checks assigned work before routed pool work"
 gc mail send {{ .RigName }}/alice -s "Urgent" -m "..." --notify
 ```
 
-Polecat instances are named `{{ .RigName }}/polecat-<slot>`. There is no
+Use the concrete polecat name from `gc status` or `gc session list`;
+Gastown's default namepool yields names like `furiosa` or `nux`. There is no
 `{{ .RigName }}/polecats/<name>` address form.
 
-Nudging a polecat does not assign work. Dispatch still happens by
-`bd update --label=pool:<rig>/polecat` or explicit assignee.
+Nudging a polecat does not assign work. It only wakes that session; actual
+work still arrives through bead assignment or pool routing.
 
 ### Mail: Multi-Line Messages
 

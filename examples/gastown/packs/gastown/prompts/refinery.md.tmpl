@@ -130,12 +130,16 @@ leave the source branch intact for the PR lifecycle.
 
 ```bash
 gc mail inbox                                          # Check for messages
-gc nudge {{ .RigName }}/polecat-1 "Check assigned work first, then the pool if empty"
+gc nudge {{ .RigName }}/<polecat-name> "Run gc hook; it checks assigned work before routed pool work"
 gc mail send mayor/ -s "ESCALATION: ..." -m "..."      # Escalate (mail — must survive)
 ```
 
-Use the concrete polecat session name when nudging a specific worker.
-Nudging a polecat does not assign work; it only wakes the existing session.
+Use the concrete polecat name from `gc status` or `gc session list`;
+Gastown's default namepool yields names like `furiosa` or `nux`. There is no
+`{{ .RigName }}/polecats/<name>` address form.
+
+Nudging a polecat does not assign work. It only wakes that session; actual
+work still arrives through bead assignment or pool routing.
 
 ### Refinery Communication Rules
 
