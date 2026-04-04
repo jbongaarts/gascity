@@ -71,7 +71,7 @@ func TestOrderDispatchCooldownDue(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Verify tracking bead was created.
-	all, _ := store.List()
+	all, _ := store.ListOpen()
 	if len(all) == 0 {
 		t.Fatal("expected tracking bead to be created")
 	}
@@ -128,7 +128,7 @@ func TestOrderDispatchCooldownNotDue(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Should still have only the seed bead.
-	all, _ := store.List()
+	all, _ := store.ListOpen()
 	if len(all) != 1 {
 		t.Errorf("expected 1 bead (seed only), got %d", len(all))
 	}
@@ -161,7 +161,7 @@ func TestOrderDispatchMultiple(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Should have the seed bead + 1 tracking bead for order-a.
-	all, _ := store.List()
+	all, _ := store.ListOpen()
 	trackingCount := 0
 	for _, b := range all {
 		for _, l := range b.Labels {
@@ -207,7 +207,7 @@ func TestOrderDispatchExecDue(t *testing.T) {
 	}
 
 	// Check tracking bead exists with exec label.
-	all, _ := store.List()
+	all, _ := store.ListOpen()
 	found := false
 	hasExec := false
 	for _, b := range all {
@@ -259,7 +259,7 @@ func TestOrderDispatchExecFailure(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Check tracking bead has exec-failed label.
-	all, _ := store.List()
+	all, _ := store.ListOpen()
 	hasFailed := false
 	for _, b := range all {
 		for _, l := range b.Labels {
@@ -273,6 +273,93 @@ func TestOrderDispatchExecFailure(t *testing.T) {
 	}
 
 	// Check order.failed event.
+	if !rec.hasType(events.OrderFailed) {
+		t.Error("missing order.failed event")
+	}
+}
+
+func TestOrderDispatchFormulaCookFailureLabelsTrackingBead(t *testing.T) {
+	store := beads.NewMemStore()
+	var rec memRecorder
+
+	aa := []orders.Order{{
+		Name:         "fail-formula",
+		Gate:         "cooldown",
+		Interval:     "2m",
+		Formula:      "missing-formula",
+		FormulaLayer: sharedTestFormulaDir,
+	}}
+	ad := buildOrderDispatcherFromList(aa, store, nil, noopRunner)
+	if ad == nil {
+		t.Fatal("expected non-nil dispatcher")
+	}
+
+	mad := ad.(*memoryOrderDispatcher)
+	mad.rec = &rec
+
+	ad.dispatch(context.Background(), t.TempDir(), time.Now())
+	time.Sleep(100 * time.Millisecond)
+
+	all, _ := store.ListOpen()
+	hasFailed := false
+	for _, b := range all {
+		for _, l := range b.Labels {
+			if l == "wisp-failed" {
+				hasFailed = true
+			}
+		}
+	}
+	if !hasFailed {
+		t.Error("tracking bead missing wisp-failed label after cook failure")
+	}
+	if !rec.hasType(events.OrderFailed) {
+		t.Error("missing order.failed event")
+	}
+}
+
+func TestOrderDispatchFormulaLabelFailureLabelsTrackingBead(t *testing.T) {
+	store := beads.NewMemStore()
+	var rec memRecorder
+	var stderr bytes.Buffer
+
+	runner := func(_ string, name string, args ...string) ([]byte, error) {
+		if name == "bd" && len(args) > 0 && args[0] == "update" {
+			return nil, fmt.Errorf("label failed")
+		}
+		return []byte("ok\n"), nil
+	}
+
+	aa := []orders.Order{{
+		Name:         "fail-label",
+		Gate:         "cooldown",
+		Interval:     "2m",
+		Formula:      "test-formula",
+		FormulaLayer: sharedTestFormulaDir,
+	}}
+	ad := buildOrderDispatcherFromList(aa, store, nil, runner)
+	if ad == nil {
+		t.Fatal("expected non-nil dispatcher")
+	}
+
+	mad := ad.(*memoryOrderDispatcher)
+	mad.rec = &rec
+	mad.stderr = &stderr
+
+	ad.dispatch(context.Background(), t.TempDir(), time.Now())
+	time.Sleep(100 * time.Millisecond)
+
+	all, _ := store.ListOpen()
+	hasFailed := false
+	for _, b := range all {
+		for _, l := range b.Labels {
+			if l == "wisp-failed" {
+				hasFailed = true
+			}
+		}
+	}
+	if !hasFailed {
+		t.Error("tracking bead missing wisp-failed label after label failure")
+	}
 	if !rec.hasType(events.OrderFailed) {
 		t.Error("missing order.failed event")
 	}
@@ -480,7 +567,7 @@ func TestEffectiveTimeout(t *testing.T) {
 		maxTimeout time.Duration
 		want       time.Duration
 	}{
-		{"exec default", orders.Order{Exec: "x.sh"}, 0, 60 * time.Second},
+		{"exec default", orders.Order{Exec: "x.sh"}, 0, 300 * time.Second},
 		{"formula default", orders.Order{Formula: "mol-x"}, 0, 30 * time.Second},
 		{"custom timeout", orders.Order{Exec: "x.sh", Timeout: "90s"}, 0, 90 * time.Second},
 		{"capped by max", orders.Order{Exec: "x.sh", Timeout: "120s"}, 60 * time.Second, 60 * time.Second},
@@ -647,7 +734,7 @@ func TestOrderDispatchRigCooldownIndependent(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// rig-b should have a tracking bead, rig-a should not.
-	all, _ := store.List()
+	all, _ := store.ListOpen()
 	rigBTracked := false
 	rigATracked := false
 	for _, b := range all {
@@ -943,7 +1030,7 @@ func TestOrderDispatchClosesTrackingBead(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Tracking bead should be closed after dispatch completes.
-	all, _ := store.List()
+	all, _ := store.ListOpen()
 	for _, b := range all {
 		for _, l := range b.Labels {
 			if l == "order-run:health-check" {
@@ -991,7 +1078,7 @@ func TestOrderDispatchSkipsOpenWork(t *testing.T) {
 	}
 
 	// No new beads should have been created (only the seed).
-	all, _ := store.List()
+	all, _ := store.ListOpen()
 	if len(all) != 1 {
 		t.Errorf("expected 1 bead (seed only), got %d", len(all))
 	}

@@ -49,6 +49,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if bp.isBlocking() {
 		waitForChange(r.Context(), s.state.EventProvider(), bp)
 	}
+	index := s.latestIndex()
+	cacheKey := responseCacheKey("status", r)
+	if body, ok := s.cachedResponse(cacheKey, index); ok {
+		writeCachedJSON(w, r, index, body)
+		return
+	}
 
 	cfg := s.state.Config()
 	sp := s.state.SessionProvider()
@@ -103,7 +109,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		seenStores[key] = true
-		list, err := store.List()
+		list, err := store.ListOpen()
 		if err != nil {
 			continue
 		}
@@ -156,7 +162,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		Work:       wc,
 		Mail:       mc,
 	}
-	writeIndexJSON(w, s.latestIndex(), resp)
+	body, err := s.storeResponse(cacheKey, index, resp)
+	if err != nil {
+		writeIndexJSON(w, index, resp)
+		return
+	}
+	writeCachedJSON(w, r, index, body)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

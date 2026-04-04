@@ -29,8 +29,16 @@ func (p *Provider) Send(from, to, subject, body string) (mail.Message, error) {
 	threadID := generateThreadID()
 	labels := []string{"gc:message", "thread:" + threadID}
 
+	title := subject
+	if title == "" && body != "" {
+		title = strings.SplitN(body, "\n", 2)[0]
+		if len(title) > 80 {
+			title = title[:77] + "..."
+		}
+	}
+
 	b, err := p.store.Create(beads.Bead{
-		Title:       subject,
+		Title:       title,
 		Description: body,
 		Type:        "message",
 		Assignee:    to,
@@ -215,7 +223,7 @@ func (p *Provider) filterMessages(recipient string, includeRead bool) ([]mail.Me
 // an explicit gc:message label query. Some external stores can retrieve message
 // beads by ID and label query but omit them from the generic list output.
 func (p *Provider) listMessages() ([]beads.Bead, error) {
-	all, err := p.store.List()
+	all, err := p.store.ListOpen()
 	if err != nil {
 		return nil, fmt.Errorf("listing beads: %w", err)
 	}

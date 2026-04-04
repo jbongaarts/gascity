@@ -12,8 +12,8 @@ type hiddenMessageStore struct {
 	*beads.MemStore
 }
 
-func (s hiddenMessageStore) List() ([]beads.Bead, error) {
-	all, err := s.MemStore.List()
+func (s hiddenMessageStore) List(_ ...string) ([]beads.Bead, error) {
+	all, err := s.ListOpen()
 	if err != nil {
 		return nil, err
 	}
