@@ -259,6 +259,24 @@ func TestWakeReasons_FreshCreatingWithoutPendingClaimStillWakesCreate(t *testing
 	}
 }
 
+func TestWakeReasons_PendingCreateClaimKeepsWakeCreateAfterCreatingGoesStale(t *testing.T) {
+	now := time.Date(2026, 3, 29, 4, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+
+	session := makeBead("b1", map[string]string{
+		"template":             "worker",
+		"session_name":         "worker-b1",
+		"state":                "creating",
+		"pending_create_claim": "true",
+	})
+	session.CreatedAt = now.Add(-2 * time.Minute)
+
+	reasons := wakeReasons(session, &config.City{}, nil, nil, nil, nil, clk)
+	if !containsWakeReason(reasons, WakeCreate) {
+		t.Fatalf("session with pending_create_claim should wake for create even when stale, got %v", reasons)
+	}
+}
+
 func TestWakeReasons_DrainedSleepPoolSessionDoesNotGetWakeConfig(t *testing.T) {
 	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
 	clk := &clock.Fake{Time: now}
