@@ -57,10 +57,11 @@ func cmdSessionWake(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gc session wake: %v\n", err) //nolint:errcheck
 		return 1
 	}
-	if b.Type != session.BeadType {
+	if !session.IsSessionBeadOrRepairable(b) {
 		fmt.Fprintf(stderr, "gc session wake: %s is not a session\n", id) //nolint:errcheck
 		return 1
 	}
+	session.RepairEmptyType(store, &b)
 	if b.Status == "closed" {
 		fmt.Fprintf(stderr, "gc session wake: session %s is closed\n", id) //nolint:errcheck
 		return 1

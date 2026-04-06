@@ -762,7 +762,6 @@ func (m *Manager) Prune(before time.Time) (int, error) {
 func (m *Manager) PruneDetailed(before time.Time) (PruneResult, error) {
 	all, err := m.store.List(beads.ListQuery{
 		Label: LabelSession,
-		Type:  BeadType,
 	})
 	if err != nil {
 		return PruneResult{}, fmt.Errorf("listing sessions: %w", err)
@@ -835,7 +834,6 @@ func (m *Manager) List(stateFilter string, templateFilter string) ([]Info, error
 func (m *Manager) ListFull(stateFilter string, templateFilter string) (*ListResult, error) {
 	all, err := m.store.List(beads.ListQuery{
 		Label: LabelSession,
-		Type:  BeadType,
 		Sort:  beads.SortCreatedDesc,
 	})
 	if err != nil {

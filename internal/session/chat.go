@@ -155,17 +155,10 @@ func (m *Manager) loadSessionBead(id string, allowClosed bool) (beads.Bead, stri
 	if err != nil {
 		return beads.Bead{}, "", fmt.Errorf("getting session: %w", err)
 	}
-	if b.Type != BeadType {
-		// If the bead has an empty type but is identifiable as a session
-		// (via gc:session label or session_name metadata), repair it rather
-		// than rejecting it. This can occur after crashes or schema
-		// migrations that leave partially-written records.
-		if b.Type == "" && (hasSessionLabel(b) || b.Metadata["session_name"] != "") {
-			RepairEmptyType(m.store, &b)
-		} else {
-			return beads.Bead{}, "", fmt.Errorf("%w: bead %s (type=%q)", ErrNotSession, id, b.Type)
-		}
+	if !IsSessionBeadOrRepairable(b) {
+		return beads.Bead{}, "", fmt.Errorf("%w: bead %s (type=%q)", ErrNotSession, id, b.Type)
 	}
+	RepairEmptyType(m.store, &b)
 	if !allowClosed && b.Status == "closed" {
 		return beads.Bead{}, "", fmt.Errorf("%w: %s", ErrSessionClosed, id)
 	}
@@ -405,7 +398,6 @@ func (m *Manager) TranscriptPath(id string, searchPaths []string) (string, error
 
 	all, err := m.store.List(beads.ListQuery{
 		Label: LabelSession,
-		Type:  BeadType,
 	})
 	if err != nil {
 		return "", fmt.Errorf("listing sessions: %w", err)

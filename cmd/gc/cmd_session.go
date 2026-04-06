@@ -347,7 +347,6 @@ func cmdSessionList(stateFilter, templateFilter string, jsonOutput bool, stdout,
 
 	allSessionBeads, err := store.List(beads.ListQuery{
 		Label: session.LabelSession,
-		Type:  session.BeadType,
 		Sort:  beads.SortCreatedDesc,
 	})
 	if err != nil {

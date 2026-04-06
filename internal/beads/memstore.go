@@ -126,6 +126,9 @@ func (m *MemStore) Update(id string, opts UpdateOpts) error {
 			if opts.Assignee != nil {
 				m.beads[i].Assignee = *opts.Assignee
 			}
+			if opts.Type != nil {
+				m.beads[i].Type = *opts.Type
+			}
 			if len(opts.Metadata) > 0 {
 				if m.beads[i].Metadata == nil {
 					m.beads[i].Metadata = make(map[string]string, len(opts.Metadata))

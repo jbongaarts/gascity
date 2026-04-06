@@ -161,9 +161,12 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 		}
 	}
 	if sessionBeadID == "" && p.beadStore != nil {
-		if all, err := p.beadStore.List(beads.ListQuery{Label: "gc:session", Type: session.BeadType}); err == nil {
+		if all, err := p.beadStore.List(beads.ListQuery{Label: "gc:session"}); err == nil {
 			for _, b := range all {
-				if b.Status != "closed" && b.Metadata["session_name"] == sessName {
+				if !session.IsSessionBeadOrRepairable(b) || b.Status == "closed" {
+					continue
+				}
+				if b.Metadata["session_name"] == sessName {
 					sessionBeadID = b.ID
 					break
 				}

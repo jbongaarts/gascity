@@ -79,7 +79,6 @@ func runAdoptionBarrier(
 	// Step 2: Load existing open session beads, indexed by session_name.
 	existing, err := store.List(beads.ListQuery{
 		Label: sessionBeadLabel,
-		Type:  sessionBeadType,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "adoption barrier: listing beads: %v\n", err) //nolint:errcheck
@@ -87,6 +86,9 @@ func runAdoptionBarrier(
 	}
 	bySessionName := make(map[string]bool, len(existing))
 	for _, b := range existing {
+		if !sessionpkg.IsSessionBeadOrRepairable(b) {
+			continue
+		}
 		if b.Status == "closed" {
 			continue // closed beads don't count for dedup
 		}

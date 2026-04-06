@@ -29,13 +29,15 @@ func loadSessionBeads(store beads.Store) ([]beads.Bead, error) {
 	}
 	all, err := store.List(beads.ListQuery{
 		Label: sessionBeadLabel,
-		Type:  sessionBeadType,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("listing session beads: %w", err)
 	}
 	var result []beads.Bead
 	for _, b := range all {
+		if !session.IsSessionBeadOrRepairable(b) {
+			continue
+		}
 		if b.Status == "closed" {
 			continue
 		}
@@ -932,12 +934,14 @@ func setBeadRestartRequested(store beads.Store, sessionName string) error {
 	}
 	all, err := store.List(beads.ListQuery{
 		Label: sessionBeadLabel,
-		Type:  sessionBeadType,
 	})
 	if err != nil {
 		return fmt.Errorf("listing session beads: %w", err)
 	}
 	for _, b := range all {
+		if !session.IsSessionBeadOrRepairable(b) {
+			continue
+		}
 		if b.Status == "closed" {
 			continue
 		}

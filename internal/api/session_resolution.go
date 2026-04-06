@@ -114,7 +114,8 @@ func apiResolveSessionIDByExactID(store beads.Store, identifier string) (string,
 		return "", fmt.Errorf("session store unavailable")
 	}
 	b, err := store.Get(identifier)
-	if err == nil && b.Type == session.BeadType {
+	if err == nil && session.IsSessionBeadOrRepairable(b) {
+		session.RepairEmptyType(store, &b)
 		return b.ID, nil
 	}
 	if err != nil && !errors.Is(err, beads.ErrNotFound) {
@@ -187,13 +188,12 @@ func (s *Server) findNamedSessionSpecForTarget(store beads.Store, target string)
 	}
 	all, err := store.List(beads.ListQuery{
 		Label: session.LabelSession,
-		Type:  session.BeadType,
 	})
 	if err != nil {
 		return apiNamedSessionSpec{}, false, fmt.Errorf("listing sessions: %w", err)
 	}
 	for _, b := range all {
-		if b.Status == "closed" || !apiIsNamedSessionBead(b) {
+		if !session.IsSessionBeadOrRepairable(b) || b.Status == "closed" || !apiIsNamedSessionBead(b) {
 			continue
 		}
 		matchesHistory := false
@@ -225,14 +225,13 @@ func (s *Server) findCanonicalNamedSession(store beads.Store, spec apiNamedSessi
 	}
 	all, err := store.List(beads.ListQuery{
 		Label: session.LabelSession,
-		Type:  session.BeadType,
 	})
 	if err != nil {
 		return beads.Bead{}, false, fmt.Errorf("listing sessions: %w", err)
 	}
 	identity := apiNormalizeSessionTarget(spec.Identity)
 	for _, b := range all {
-		if b.Status == "closed" {
+		if !session.IsSessionBeadOrRepairable(b) || b.Status == "closed" {
 			continue
 		}
 		if apiIsNamedSessionBead(b) && apiNamedSessionIdentity(b) == identity {
@@ -269,13 +268,12 @@ func (s *Server) resolveConfiguredNamedSessionID(store beads.Store, identifier s
 
 	all, err := store.List(beads.ListQuery{
 		Label: session.LabelSession,
-		Type:  session.BeadType,
 	})
 	if err != nil {
 		return "", true, fmt.Errorf("listing sessions: %w", err)
 	}
 	for _, b := range all {
-		if b.Status == "closed" {
+		if !session.IsSessionBeadOrRepairable(b) || b.Status == "closed" {
 			continue
 		}
 		if apiBeadConflictsWithNamedSession(b, spec) {

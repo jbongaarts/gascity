@@ -49,7 +49,6 @@ func resolveSessionID(store beads.Store, identifier string, allowClosed bool) (s
 	// Fall back to live alias/session_name resolution among session beads.
 	all, err := store.List(beads.ListQuery{
 		Label:         LabelSession,
-		Type:          BeadType,
 		IncludeClosed: allowClosed,
 	})
 	if err != nil {

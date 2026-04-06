@@ -550,6 +550,8 @@ func TestRepairEmptyType(t *testing.T) {
 	if err := store.Update(b.ID, beads.UpdateOpts{Type: &emptyType}); err != nil {
 		t.Fatal(err)
 	}
+	// Re-read so the local copy has the empty type.
+	b, _ = store.Get(b.ID)
 
 	session.RepairEmptyType(store, &b)
 

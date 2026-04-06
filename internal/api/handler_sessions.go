@@ -205,7 +205,7 @@ func (s *Server) handleSessionList(w http.ResponseWriter, r *http.Request) {
 
 	// Build bead index for reason enrichment.
 	beadIndex := make(map[string]*beads.Bead)
-	if all, err := store.List(beads.ListQuery{Label: session.LabelSession, Type: session.BeadType}); err == nil {
+	if all, err := store.List(beads.ListQuery{Label: session.LabelSession}); err == nil {
 		for i := range all {
 			beadIndex[all[i].ID] = &all[i]
 		}
@@ -340,10 +340,11 @@ func (s *Server) handleSessionWake(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if b.Type != session.BeadType {
+	if !session.IsSessionBeadOrRepairable(b) {
 		writeError(w, http.StatusBadRequest, "invalid", id+" is not a session")
 		return
 	}
+	session.RepairEmptyType(store, &b)
 	if b.Status == "closed" {
 		writeError(w, http.StatusConflict, "conflict", "session "+id+" is closed")
 		return
@@ -398,10 +399,11 @@ func (s *Server) handleSessionRename(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if b.Type != session.BeadType {
+	if !session.IsSessionBeadOrRepairable(b) {
 		writeError(w, http.StatusBadRequest, "invalid", id+" is not a session")
 		return
 	}
+	session.RepairEmptyType(store, &b)
 
 	mgr := s.sessionManager(store)
 	if err := mgr.Rename(id, body.Title); err != nil {
@@ -531,10 +533,11 @@ func (s *Server) handleSessionPatch(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
-	if b.Type != session.BeadType {
+	if !session.IsSessionBeadOrRepairable(b) {
 		writeError(w, http.StatusBadRequest, "invalid", id+" is not a session")
 		return
 	}
+	session.RepairEmptyType(store, &b)
 
 	mgr := s.sessionManager(store)
 	updateFn := func() error {

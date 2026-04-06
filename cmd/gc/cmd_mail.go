@@ -394,13 +394,12 @@ func listLiveSessionMailboxes(store beads.Store) (map[string]bool, error) {
 	}
 	all, err := store.List(beads.ListQuery{
 		Label: session.LabelSession,
-		Type:  session.BeadType,
 	})
 	if err != nil {
 		return nil, err
 	}
 	for _, b := range all {
-		if b.Type != session.BeadType || b.Status == "closed" {
+		if !session.IsSessionBeadOrRepairable(b) || b.Status == "closed" {
 			continue
 		}
 		if address := sessionMailboxAddress(b); address != "" {

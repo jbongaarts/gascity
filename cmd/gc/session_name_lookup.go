@@ -185,12 +185,14 @@ func lookupPoolSessionNames(store beads.Store, template string) (map[string]stri
 	}
 	all, err := store.List(beads.ListQuery{
 		Label: sessionBeadLabel,
-		Type:  sessionBeadType,
 	})
 	if err != nil {
 		return result, err
 	}
 	for _, b := range all {
+		if !sessionpkg.IsSessionBeadOrRepairable(b) {
+			continue
+		}
 		if b.Status == "closed" || b.Metadata["pool_slot"] == "" {
 			continue
 		}
