@@ -318,6 +318,103 @@ func TestSetMetadata_deduplicatesViaConformance(t *testing.T) {
 	}
 }
 
+// TestCreate_metadataWithSpecialCharsRoundTrips validates the exec.Store
+// protocol contract: metadata values containing quotes and commas must
+// round-trip correctly. This exercises conformance.sh (the reference
+// provider), not gc-beads-k8s directly. The gc-beads-k8s fix was verified
+// via K8s homelab deployment (see PR #367).
+func TestCreate_metadataWithSpecialCharsRoundTrips(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+	scriptPath, err := filepath.Abs(filepath.Join("testdata", "conformance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewStore(scriptPath)
+	s.SetEnv(map[string]string{"BEADS_DIR": t.TempDir()})
+
+	created, err := s.Create(beads.Bead{
+		Title:  "agent-session",
+		Type:   "session",
+		Labels: []string{"gc:session"},
+		Metadata: map[string]string{
+			"command":      `claude --settings "/city/.gc/settings.json"`,
+			"csv_tricky":   `value,with,commas`,
+			"session_name": "gascity-mayor",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := s.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Metadata["command"] != `claude --settings "/city/.gc/settings.json"` {
+		t.Errorf("Metadata[command] = %q, want value with quotes", got.Metadata["command"])
+	}
+	if got.Metadata["csv_tricky"] != "value,with,commas" {
+		t.Errorf("Metadata[csv_tricky] = %q, want value with commas", got.Metadata["csv_tricky"])
+	}
+	if got.Metadata["session_name"] != "gascity-mayor" {
+		t.Errorf("Metadata[session_name] = %q, want %q", got.Metadata["session_name"], "gascity-mayor")
+	}
+	for _, l := range got.Labels {
+		if strings.HasPrefix(l, "meta:") {
+			t.Errorf("meta: label leaked into Labels: %s", l)
+		}
+	}
+}
+
+// TestCreate_numericLookingMetadataStaysString validates the exec.Store
+// protocol contract: numeric-looking metadata values must round-trip as
+// strings. This exercises conformance.sh (the reference provider), not
+// gc-beads-k8s directly.
+func TestCreate_numericLookingMetadataStaysString(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("jq not available")
+	}
+	scriptPath, err := filepath.Abs(filepath.Join("testdata", "conformance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewStore(scriptPath)
+	s.SetEnv(map[string]string{"BEADS_DIR": t.TempDir()})
+
+	created, err := s.Create(beads.Bead{
+		Title: "quarantined-session",
+		Type:  "session",
+		Metadata: map[string]string{
+			"wake_attempts":     "0",
+			"quarantined_until": "",
+			"churn_count":       "42",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := s.Get(created.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	// Values that look numeric must round-trip as strings. bd's JSON column
+	// can store 0 as a number; the script's jq must coerce with tostring.
+	if got.Metadata["wake_attempts"] != "0" {
+		t.Errorf("Metadata[wake_attempts] = %q, want %q", got.Metadata["wake_attempts"], "0")
+	}
+	if got.Metadata["quarantined_until"] != "" {
+		t.Errorf("Metadata[quarantined_until] = %q, want empty string", got.Metadata["quarantined_until"])
+	}
+	if got.Metadata["churn_count"] != "42" {
+		t.Errorf("Metadata[churn_count] = %q, want %q", got.Metadata["churn_count"], "42")
+	}
+}
+
 func TestCreate_defaultsTypeToTask(t *testing.T) {
 	dir := t.TempDir()
 	outFile := filepath.Join(dir, "stdin.json")

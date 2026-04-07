@@ -9,8 +9,10 @@
 #
 # Label conventions:
 #   parent:<id>  — tracks parent-child relationships
-#   meta:<k>=<v> — stores metadata as labels
 #   needs:<id>   — tracks step dependencies
+#
+# Metadata is reconstructed from meta:<k>=<v> labels on read.
+# br does not yet support native --metadata; metadata is still written as labels.
 #
 # Operations that Gas City composes in Go (exit 2):
 #   mol-cook  — composed from Create calls by exec.Store
@@ -43,7 +45,11 @@ br_to_gc() {
     ref: (.ref // ""),
     needs: [.labels // [] | .[] | select(startswith("needs:")) | ltrimstr("needs:")],
     description: (.description // ""),
-    labels: [.labels // [] | .[] | select((startswith("parent:") or startswith("meta:") or startswith("needs:")) | not)]
+    labels: [.labels // [] | .[] | select((startswith("parent:") or startswith("meta:") or startswith("needs:")) | not)],
+    metadata: ((
+      ([.labels // [] | .[] | select(startswith("meta:")) | ltrimstr("meta:") | split("=") | {(.[0]): (.[1:] | join("="))}] | add // {})
+      + (.metadata // {})
+    ) | map_values(tostring))
   }'
 }
 
@@ -62,7 +68,11 @@ br_list_to_gc() {
     ref: (.ref // ""),
     needs: [.labels // [] | .[] | select(startswith("needs:")) | ltrimstr("needs:")],
     description: (.description // ""),
-    labels: [.labels // [] | .[] | select((startswith("parent:") or startswith("meta:") or startswith("needs:")) | not)]
+    labels: [.labels // [] | .[] | select((startswith("parent:") or startswith("meta:") or startswith("needs:")) | not)],
+    metadata: ((
+      ([.labels // [] | .[] | select(startswith("meta:")) | ltrimstr("meta:") | split("=") | {(.[0]): (.[1:] | join("="))}] | add // {})
+      + (.metadata // {})
+    ) | map_values(tostring))
   }]'
 }
 
@@ -96,6 +106,12 @@ case "$op" in
       [ -n "$need" ] && all_labels+=("needs:$need")
     done < <(echo "$input" | jq -r '.needs // [] | .[]')
 
+    # Convert metadata entries to meta:<key>=<value> labels.
+    # br does not support native --metadata; metadata is stored as labels.
+    while IFS= read -r meta_label; do
+      [ -n "$meta_label" ] && all_labels+=("$meta_label")
+    done < <(echo "$input" | jq -r '.metadata // {} | to_entries[] | "meta:\(.key)=\(.value)"')
+
     # Build create command.
     cmd_args=(br create --json --type="$bead_type")
     [ -n "$description" ] && cmd_args+=(--description "$description")
@@ -128,6 +144,12 @@ case "$op" in
     # Handle parent_id change.
     parent_id=$(echo "$input" | jq -r '.parent_id // empty')
     [ -n "$parent_id" ] && cmd_args+=(--add-label "parent:$parent_id")
+
+    # Convert metadata entries to meta:<key>=<value> labels.
+    # br does not support native --metadata; metadata is stored as labels.
+    while IFS= read -r meta_label; do
+      [ -n "$meta_label" ] && cmd_args+=(--add-label "$meta_label")
+    done < <(echo "$input" | jq -r '.metadata // {} | to_entries[] | "meta:\(.key)=\(.value)"')
 
     "${cmd_args[@]}" > /dev/null
     ;;
