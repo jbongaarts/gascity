@@ -225,6 +225,26 @@ type resolvedContext struct {
 	RigName  string // rig name (empty if not in a rig context)
 }
 
+// resolveCommandContext resolves city+rig context for commands that accept an
+// optional path argument. With no args, it uses the full flag/env/cwd resolver.
+// With a path arg, it treats that path as either a city path or a rig path and
+// resolves the containing city via the rig registry before falling back to
+// walking up for city.toml.
+func resolveCommandContext(args []string) (resolvedContext, error) {
+	if len(args) == 0 {
+		return resolveContext()
+	}
+	return resolveContextFromPath(args[0])
+}
+
+func resolveCommandCity(args []string) (string, error) {
+	ctx, err := resolveCommandContext(args)
+	if err != nil {
+		return "", err
+	}
+	return ctx.CityPath, nil
+}
+
 // resolveContext resolves the city and optional rig context using the
 // following priority chain:
 //  1. --city + --rig flags (explicit both, validated)
@@ -321,6 +341,27 @@ func resolveCity() (string, error) {
 	return ctx.CityPath, nil
 }
 
+func resolveContextFromPath(path string) (resolvedContext, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return resolvedContext{}, err
+	}
+	if ctx, ok, err := resolveRigPathToContext(abs); ok {
+		if err != nil {
+			return resolvedContext{}, err
+		}
+		return ctx, nil
+	}
+	cityPath, err := findCity(abs)
+	if err != nil {
+		return resolvedContext{}, err
+	}
+	return resolvedContext{
+		CityPath: cityPath,
+		RigName:  rigFromCwdDir(cityPath, abs),
+	}, nil
+}
+
 // validateCityPath resolves and validates a path as a city directory.
 func validateCityPath(p string) (string, error) {
 	abs, err := filepath.Abs(p)
@@ -361,6 +402,19 @@ func resolveRigToContext(nameOrPath string) (resolvedContext, error) {
 	}
 
 	return resolvedContext{}, fmt.Errorf("rig %q is not registered in any city", nameOrPath)
+}
+
+func resolveRigPathToContext(dir string) (resolvedContext, bool, error) {
+	reg := supervisor.NewRegistry(supervisor.RegistryPath())
+	entry, ok := reg.LookupRigByPath(dir)
+	if !ok {
+		return resolvedContext{}, false, nil
+	}
+	ctx, err := resolveRigEntryCity(reg, entry)
+	if err != nil {
+		return resolvedContext{}, true, err
+	}
+	return ctx, true, nil
 }
 
 // resolveRigEntryCity resolves a rig entry to a city. Uses default_city if
