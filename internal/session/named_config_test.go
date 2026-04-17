@@ -1,6 +1,7 @@
 package session
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/beads"
@@ -206,6 +207,118 @@ func TestFindClosedNamedSessionBead_PrefersNewestClosedCanonical(t *testing.T) {
 	}
 	if found.ID != newer.ID {
 		t.Fatalf("found bead ID = %q, want newest canonical %q", found.ID, newer.ID)
+	}
+}
+
+func TestResolveNamedSessionSpecForConfigTarget_BareNameResolvesV2BoundSession(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name:        "mayor",
+			BindingName: "gastown",
+		}},
+		NamedSessions: []config.NamedSession{{
+			Template:    "mayor",
+			BindingName: "gastown",
+		}},
+	}
+	spec, ok, err := ResolveNamedSessionSpecForConfigTarget(cfg, "test-city", "mayor", "")
+	if err != nil {
+		t.Fatalf("ResolveNamedSessionSpecForConfigTarget(mayor): %v", err)
+	}
+	if !ok {
+		t.Fatal("ResolveNamedSessionSpecForConfigTarget(mayor) = false, want true")
+	}
+	if spec.Identity != "gastown.mayor" {
+		t.Fatalf("spec.Identity = %q, want gastown.mayor", spec.Identity)
+	}
+}
+
+func TestResolveNamedSessionSpecForConfigTarget_BareNameAmbiguousAcrossBindings(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "mayor", BindingName: "gastown"},
+			{Name: "mayor", BindingName: "otherpack"},
+		},
+		NamedSessions: []config.NamedSession{
+			{Template: "mayor", BindingName: "gastown"},
+			{Template: "mayor", BindingName: "otherpack"},
+		},
+	}
+	_, ok, err := ResolveNamedSessionSpecForConfigTarget(cfg, "test-city", "mayor", "")
+	if !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("ResolveNamedSessionSpecForConfigTarget(mayor) ok=%v err=%v, want ErrAmbiguous", ok, err)
+	}
+	if ok {
+		t.Fatal("ResolveNamedSessionSpecForConfigTarget(mayor) = true, want false on ambiguity")
+	}
+}
+
+func TestResolveNamedSessionSpecForConfigTarget_BareNameAmbiguousAcrossRigAndCity(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "mayor", BindingName: "citypack"},
+			{Name: "mayor", BindingName: "rigpack", Dir: "demo"},
+		},
+		NamedSessions: []config.NamedSession{
+			{Template: "mayor", BindingName: "citypack"},
+			{Template: "mayor", BindingName: "rigpack", Dir: "demo"},
+		},
+	}
+	_, ok, err := ResolveNamedSessionSpecForConfigTarget(cfg, "test-city", "mayor", "demo")
+	if !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("ResolveNamedSessionSpecForConfigTarget(mayor, demo) ok=%v err=%v, want ErrAmbiguous across rig+city scopes", ok, err)
+	}
+}
+
+func TestResolveNamedSessionSpecForConfigTarget_BareNameAmbiguousMixesDirectAndBareMatches(t *testing.T) {
+	// A V1 rig-scoped entry (direct identity == "demo/mayor") plus a V2
+	// city import (bare leaf == "mayor") must surface as ErrAmbiguous
+	// when the user types bare "mayor" inside rig "demo". Otherwise the
+	// direct-identity loop would silently shadow the V2 import.
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "mayor", Dir: "demo"},
+			{Name: "mayor", BindingName: "citypack"},
+		},
+		NamedSessions: []config.NamedSession{
+			{Template: "mayor", Dir: "demo"},
+			{Template: "mayor", BindingName: "citypack"},
+		},
+	}
+	_, ok, err := ResolveNamedSessionSpecForConfigTarget(cfg, "test-city", "mayor", "demo")
+	if !errors.Is(err, ErrAmbiguous) {
+		t.Fatalf("ResolveNamedSessionSpecForConfigTarget(mayor, demo) ok=%v err=%v, want ErrAmbiguous across direct+bare matches", ok, err)
+	}
+}
+
+func TestResolveNamedSessionSpecForConfigTarget_BareNameIgnoresRigScopedOutsideRig(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name: "witness",
+			Dir:  "demo",
+		}},
+		NamedSessions: []config.NamedSession{{
+			Template: "witness",
+			Dir:      "demo",
+		}},
+	}
+	if _, ok, err := ResolveNamedSessionSpecForConfigTarget(cfg, "test-city", "witness", ""); err != nil || ok {
+		t.Fatalf("ResolveNamedSessionSpecForConfigTarget(witness) ok=%v err=%v, want not found outside rig context", ok, err)
+	}
+	spec, ok, err := ResolveNamedSessionSpecForConfigTarget(cfg, "test-city", "witness", "demo")
+	if err != nil {
+		t.Fatalf("ResolveNamedSessionSpecForConfigTarget(witness, demo): %v", err)
+	}
+	if !ok {
+		t.Fatal("ResolveNamedSessionSpecForConfigTarget(witness, demo) = false, want true")
+	}
+	if spec.Identity != "demo/witness" {
+		t.Fatalf("spec.Identity = %q, want demo/witness", spec.Identity)
 	}
 }
 
