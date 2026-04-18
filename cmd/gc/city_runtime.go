@@ -984,6 +984,16 @@ func sweepUndesiredPoolSessionBeads(
 		// staleCreatingState: a missing or zero creation_complete_at is
 		// treated as stale (sweepable) so beads without the per-start
 		// marker (older builds, manually repaired) stay recoverable.
+		//
+		// Upgrade contract: older binaries did not write
+		// creation_complete_at, so any bead persisted before upgrade
+		// fails the age check and becomes sweepable. That matches the
+		// semantics a crashed bead would get under the current binary
+		// and is the intended behavior — a bead that survived a binary
+		// restart without completing its wake is not in the protected
+		// "mid-start" window. The atomicity requirement therefore only
+		// binds within a single binary (writers and sweep are the same
+		// process); the rollout needs no cross-version coordination.
 		if state := strings.TrimSpace(bead.Metadata["state"]); (state == "active" || state == "awake") &&
 			strings.TrimSpace(bead.Metadata["last_woke_at"]) == "" &&
 			strings.TrimSpace(bead.Metadata["state_reason"]) == "creation_complete" {
