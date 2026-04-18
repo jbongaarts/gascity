@@ -4170,6 +4170,46 @@ func TestBuildSlingFormulaVarsUsesRigDefaultBranchWhenTargetMissing(t *testing.T
 	}
 }
 
+func TestBuildSlingFormulaVarsPreservesSlashesInRigDefaultBranch(t *testing.T) {
+	// Regression test for #719: slashes in the default branch must survive
+	// the rig → defaultBranchFor → base_branch path, not just the internal
+	// git parser. Previously LastIndex(ref, "/") truncated at the consumer
+	// boundary too.
+	repoDir := newRepoWithOriginHead(t, "team/feature/x")
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Rigs: []config.Rig{
+			{Name: "hw", Path: repoDir},
+		},
+	}
+	deps, _, _ := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+	deps.Store = &recordingStore{Store: beads.NewMemStore()}
+
+	vars := buildSlingFormulaVars("mol-polecat-work", "HW-42", nil, config.Agent{Name: "polecat", Dir: "hw"}, deps)
+
+	if got, ok := findVarValue(vars, "base_branch"); !ok || got != "team/feature/x" {
+		t.Fatalf("base_branch var = %q, %v; want team/feature/x, true", got, ok)
+	}
+}
+
+func TestBuildSlingFormulaVarsPreservesSlashesInRefineryTargetBranch(t *testing.T) {
+	// Regression test for #719 covering the refinery target_branch path.
+	repoDir := newRepoWithOriginHead(t, "boylec/develop")
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Rigs: []config.Rig{
+			{Name: "hw", Path: repoDir},
+		},
+	}
+	deps, _, _ := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+
+	vars := buildSlingFormulaVars("mol-refinery-patrol", "", nil, config.Agent{Name: "refinery", Dir: "hw"}, deps)
+
+	if got, ok := findVarValue(vars, "target_branch"); !ok || got != "boylec/develop" {
+		t.Fatalf("target_branch var = %q, %v; want boylec/develop, true", got, ok)
+	}
+}
+
 func TestBuildSlingFormulaVarsPreservesExplicitValues(t *testing.T) {
 	cfg := &config.City{Workspace: config.Workspace{Name: "test-city"}}
 	store := &recordingStore{
