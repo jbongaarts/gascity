@@ -50,20 +50,6 @@ func (s *failNthMetadataBatchStore) SetMetadataBatch(id string, kvs map[string]s
 	return s.MemStore.SetMetadataBatch(id, kvs)
 }
 
-type injectPendingCreateAfterClearStore struct {
-	*beads.MemStore
-}
-
-func (s *injectPendingCreateAfterClearStore) SetMetadata(id, key, value string) error {
-	if err := s.MemStore.SetMetadata(id, key, value); err != nil {
-		return err
-	}
-	if key == "pending_create_claim" && value == "" {
-		return s.MemStore.SetMetadata(id, key, "true")
-	}
-	return nil
-}
-
 type gatedStartProvider struct {
 	*runtime.Fake
 	mu            sync.Mutex
@@ -903,7 +889,14 @@ func TestExecutePlannedStarts_RevalidatesDependenciesBetweenWaveBatches(t *testi
 	}
 }
 
-func TestCommitStartResult_ClearsPendingCreateClaimBeforeHashBatch(t *testing.T) {
+// When the atomic start batch fails, NO state change lands: state stays
+// "creating", pending_create_claim stays "true", and the post-create marker
+// is absent. The reconciler's next tick retries via recoverRunningPendingCreate.
+// This is the intentional consequence of folding the claim clear into the
+// same SetMetadataBatch as the state/state_reason/creation_complete_at
+// transition so the sweep never observes a transient state without either
+// the claim or the marker.
+func TestCommitStartResult_AtomicBatchFailureLeavesClaimIntact(t *testing.T) {
 	store := &failingMetadataBatchStore{MemStore: beads.NewMemStore(), failBatch: true}
 	bead, err := store.Create(beads.Bead{
 		Title:  "helper",
@@ -913,6 +906,7 @@ func TestCommitStartResult_ClearsPendingCreateClaimBeforeHashBatch(t *testing.T)
 			"session_name":          "sky",
 			"session_name_explicit": "true",
 			"pending_create_claim":  "true",
+			"state":                 "creating",
 		},
 	})
 	if err != nil {
@@ -944,8 +938,14 @@ func TestCommitStartResult_ClearsPendingCreateClaimBeforeHashBatch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Metadata["pending_create_claim"] != "" {
-		t.Fatalf("pending_create_claim = %q, want cleared", got.Metadata["pending_create_claim"])
+	if got.Metadata["pending_create_claim"] != "true" {
+		t.Fatalf("pending_create_claim = %q, want preserved (atomic batch failed, state unchanged)", got.Metadata["pending_create_claim"])
+	}
+	if got.Metadata["state"] != "creating" {
+		t.Fatalf("state = %q, want creating (atomic batch failed)", got.Metadata["state"])
+	}
+	if got.Metadata["creation_complete_at"] != "" {
+		t.Fatalf("creation_complete_at = %q, want empty (atomic batch failed)", got.Metadata["creation_complete_at"])
 	}
 }
 
@@ -1009,8 +1009,59 @@ func TestExecutePlannedStartsClearsLegacyDrainAckAfterProviderStartBeforeMetadat
 	}
 }
 
-func TestCommitStartResult_DoesNotClearFreshPendingCreateClaimInHashBatch(t *testing.T) {
-	store := &injectPendingCreateAfterClearStore{MemStore: beads.NewMemStore()}
+// recoverRunningPendingCreate heals an already-active bead whose runtime
+// is alive but whose pending_create_claim flag was left set (typically
+// after a partial write on a prior tick). The heal MUST stamp a fresh
+// creation_complete_at alongside the claim clear, otherwise the sweep's
+// post-create guard treats the healed bead as stale and the bead can be
+// closed on the next tick if the runtime briefly dies — re-opening the
+// spin loop this PR is meant to close.
+func TestRecoverRunningPendingCreate_StampsCreationCompleteAtForAlreadyActive(t *testing.T) {
+	store := beads.NewMemStore()
+	bead, err := store.Create(beads.Bead{
+		Title:  "helper",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"session_name":         "sky",
+			"pending_create_claim": "true",
+			"state":                "active",
+			"state_reason":         "creation_complete",
+			// No creation_complete_at from the original start — the
+			// exact legacy shape recovery needs to heal.
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.City{Agents: []config.Agent{{Name: "helper"}}}
+	tp := TemplateParams{SessionName: "sky", TemplateName: "helper"}
+	clkTime := time.Date(2026, 3, 18, 12, 0, 1, 0, time.UTC)
+
+	if !recoverRunningPendingCreate(&bead, tp, cfg, store, &clock.Fake{Time: clkTime}, nil) {
+		t.Fatal("recoverRunningPendingCreate returned false, want true")
+	}
+
+	got, err := store.Get(bead.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Metadata["pending_create_claim"] != "" {
+		t.Fatalf("pending_create_claim = %q, want cleared", got.Metadata["pending_create_claim"])
+	}
+	if got.Metadata["creation_complete_at"] != clkTime.Format(time.RFC3339) {
+		t.Fatalf("creation_complete_at = %q, want %q — sweep guard would treat healed bead as stale without this stamp",
+			got.Metadata["creation_complete_at"], clkTime.Format(time.RFC3339))
+	}
+}
+
+// A successful atomic start batch must land state=active, state_reason,
+// creation_complete_at, AND the pending_create_claim clear together —
+// downstream readers (e.g. the pool bead sweep) rely on this atomicity so
+// they never observe state=active without either the claim or the
+// creation_complete_at marker that the post-create guard keys on.
+func TestCommitStartResult_AtomicBatchLandsStateAndClaimClearTogether(t *testing.T) {
+	store := beads.NewMemStore()
 	bead, err := store.Create(beads.Bead{
 		Title:  "helper",
 		Type:   sessionBeadType,
@@ -1041,7 +1092,8 @@ func TestCommitStartResult_DoesNotClearFreshPendingCreateClaimInHashBatch(t *tes
 		finished: time.Date(2026, 3, 18, 12, 0, 1, 0, time.UTC),
 	}
 
-	ok := commitStartResult(result, store, &clock.Fake{Time: time.Date(2026, 3, 18, 12, 0, 1, 0, time.UTC)}, events.Discard, 0, ioDiscard{}, ioDiscard{})
+	clkTime := time.Date(2026, 3, 18, 12, 0, 1, 0, time.UTC)
+	ok := commitStartResult(result, store, &clock.Fake{Time: clkTime}, events.Discard, 0, ioDiscard{}, ioDiscard{})
 	if !ok {
 		t.Fatal("commitStartResult returned false for successful start")
 	}
@@ -1050,8 +1102,17 @@ func TestCommitStartResult_DoesNotClearFreshPendingCreateClaimInHashBatch(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Metadata["pending_create_claim"] != "true" {
-		t.Fatalf("pending_create_claim = %q, want fresh claim preserved by hash batch", got.Metadata["pending_create_claim"])
+	if got.Metadata["state"] != "active" {
+		t.Fatalf("state = %q, want active", got.Metadata["state"])
+	}
+	if got.Metadata["state_reason"] != "creation_complete" {
+		t.Fatalf("state_reason = %q, want creation_complete", got.Metadata["state_reason"])
+	}
+	if got.Metadata["creation_complete_at"] == "" {
+		t.Fatal("creation_complete_at empty — sweep guard would not key on post-create window")
+	}
+	if got.Metadata["pending_create_claim"] != "" {
+		t.Fatalf("pending_create_claim = %q, want cleared atomically with state transition", got.Metadata["pending_create_claim"])
 	}
 }
 

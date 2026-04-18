@@ -733,7 +733,7 @@ func (m *Manager) Reactivate(id string) error {
 // ConfirmCreation transitions a session from creating to active after the
 // runtime process has been confirmed alive.
 func (m *Manager) ConfirmCreation(id string) error {
-	return m.store.SetMetadataBatch(id, ConfirmStartedPatch())
+	return m.store.SetMetadataBatch(id, ConfirmStartedPatch(time.Now()))
 }
 
 // Rename updates the title of a chat session.
