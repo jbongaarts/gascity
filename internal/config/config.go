@@ -23,6 +23,12 @@ import (
 // or underscores. Slashes, spaces, and dots are not allowed.
 var validAgentName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
 
+// validNamedSessionTemplate matches a named_session template reference.
+// Root-authored named sessions may target imported PackV2 templates by
+// binding-qualified name ("binding.agent"), while rig scope is carried
+// separately by NamedSession.Dir during pack expansion.
+var validNamedSessionTemplate = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)?$`)
+
 const (
 	// ControlDispatcherAgentName is the built-in deterministic control lane for
 	// graph.v2 workflow control beads.
@@ -2335,8 +2341,11 @@ func validateNamedSessions(cfg *City, requireBackingTemplate bool) error {
 		if s.Template == "" {
 			return fmt.Errorf("named_session[%d]: template is required", i)
 		}
-		if !validAgentName.MatchString(s.Template) {
-			return fmt.Errorf("named_session[%d]: template %q must match [a-zA-Z0-9][a-zA-Z0-9_-]*", i, s.Template)
+		if !validNamedSessionTemplate.MatchString(s.Template) {
+			return fmt.Errorf(
+				"named_session[%d]: template %q must be an agent template name like %q or a binding-qualified name like %q",
+				i, s.Template, "agent", "binding.agent",
+			)
 		}
 		if s.Name != "" && !validAgentName.MatchString(s.Name) {
 			return fmt.Errorf("named_session[%d]: name %q must match [a-zA-Z0-9][a-zA-Z0-9_-]*", i, s.Name)
