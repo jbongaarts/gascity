@@ -130,17 +130,15 @@ func (e *reconcilerTestEnv) addDesired(name, template string, running bool) {
 	}
 }
 
-// addDesiredWithConfig registers a session with a custom runtime.Config.
-func (e *reconcilerTestEnv) addDesiredWithConfig(name, template string, running bool, cmd string) {
+// addRunningWorkerDesiredWithNewConfig registers and starts the worker session with the drift test command.
+func (e *reconcilerTestEnv) addRunningWorkerDesiredWithNewConfig() {
 	tp := TemplateParams{
-		Command:      cmd,
-		SessionName:  name,
-		TemplateName: template,
+		Command:      "new-cmd",
+		SessionName:  "worker",
+		TemplateName: "worker",
 	}
-	e.desiredState[name] = tp
-	if running {
-		_ = e.sp.Start(context.Background(), name, runtime.Config{Command: cmd})
-	}
+	e.desiredState["worker"] = tp
+	_ = e.sp.Start(context.Background(), "worker", runtime.Config{Command: "new-cmd"})
 }
 
 // addDesiredLive registers a session with custom session_live config.
@@ -1433,7 +1431,7 @@ func TestReconcileSessionBeads_ConfigDriftInitiatesDrain(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
 	// Desired state has a DIFFERENT config than what's in the bead.
-	env.addDesiredWithConfig("worker", "worker", true, "new-cmd")
+	env.addRunningWorkerDesiredWithNewConfig()
 	session := env.createSessionBead("worker", "worker")
 	// Session has fully started — started_config_hash records what it launched with.
 	startedHash := runtime.CoreFingerprint(runtime.Config{Command: "test-cmd"})
@@ -1483,7 +1481,7 @@ func TestReconcileSessionBeads_NoDriftBeforeStartedHashWritten(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
 	// Desired state has a DIFFERENT config than the bead's config_hash.
-	env.addDesiredWithConfig("worker", "worker", true, "new-cmd")
+	env.addRunningWorkerDesiredWithNewConfig()
 	session := env.createSessionBead("worker", "worker")
 	// Do NOT set started_config_hash — simulates the window between
 	// sync-time config_hash write and post-start started_config_hash write.
@@ -2653,7 +2651,7 @@ func TestReconcileSessionBeads_DriftDrainUsesConfigTimeout(t *testing.T) {
 		Agents: []config.Agent{{Name: "worker"}},
 		Daemon: config.DaemonConfig{DriftDrainTimeout: "7m"},
 	}
-	env.addDesiredWithConfig("worker", "worker", true, "new-cmd")
+	env.addRunningWorkerDesiredWithNewConfig()
 	session := env.createSessionBead("worker", "worker")
 	env.setSessionMetadata(&session, map[string]string{
 		"started_config_hash": runtime.CoreFingerprint(runtime.Config{Command: "test-cmd"}),

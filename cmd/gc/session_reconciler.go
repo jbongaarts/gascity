@@ -1057,9 +1057,11 @@ func sessionHasOpenAssignedWorkInStore(store beads.Store, session beads.Bead) (b
 // namedSessionActivityThreshold is the maximum age of the last reliable activity
 // reference for a named session to be considered "actively in use" for
 // config-drift deferral.
-const namedSessionActivityThreshold = 2 * time.Minute
-const namedSessionConfigDriftDeferredAtMetadata = "config_drift_deferred_at"
-const namedSessionConfigDriftDeferredKeyMetadata = "config_drift_deferred_key"
+const (
+	namedSessionActivityThreshold              = 2 * time.Minute
+	namedSessionConfigDriftDeferredAtMetadata  = "config_drift_deferred_at"
+	namedSessionConfigDriftDeferredKeyMetadata = "config_drift_deferred_key"
+)
 
 // namedSessionActivelyInUse returns true if a named session is currently
 // in active use and should not be immediately drained for config-drift.

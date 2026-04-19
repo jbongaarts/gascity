@@ -467,7 +467,7 @@ func TestPoolSessionConfigDriftNotAffectedByActiveGuard(t *testing.T) {
 	env.cfg = &config.City{
 		Agents: []config.Agent{{Name: "worker", StartCommand: "new-cmd"}},
 	}
-	env.addDesiredWithConfig("worker", "worker", true, "new-cmd")
+	env.addRunningWorkerDesiredWithNewConfig()
 
 	session := env.createSessionBead("worker", "worker")
 	env.markSessionActive(&session)
