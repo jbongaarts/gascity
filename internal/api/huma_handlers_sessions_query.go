@@ -371,8 +371,9 @@ func (s *Server) humaHandleSessionAgentGet(_ context.Context, input *SessionAgen
 // --- Session Stream (SSE) ---
 
 // sessionStreamState holds the state resolved by checkSessionStream that
-// streamSession needs. It's not passed through registerSSE; instead both
-// functions re-resolve from the input, which is cheap (map lookups).
+// streamSession needs. The Huma input caches it per request so the stream
+// body can reuse the initial History/State resolution instead of reloading
+// the transcript before the first byte is written.
 type sessionStreamState struct {
 	info       session.Info
 	handle     worker.Handle

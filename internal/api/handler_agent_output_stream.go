@@ -103,10 +103,14 @@ func (s *Server) streamSessionLog(
 	defer lw.Close()
 
 	var lastSize int64
-	lw.onReset = func() { lastSize = 0 }
 	var lastSentUUID string
 	var seq uint64
 	sentUUIDs := make(map[string]struct{})
+	lw.onReset = func() {
+		lastSize = 0
+		lastSentUUID = ""
+		sentUUIDs = make(map[string]struct{})
+	}
 
 	readAndEmit := func() bool {
 		if resolvePath != nil {
@@ -293,10 +297,14 @@ func (s *Server) streamSessionLogHuma(
 	defer lw.Close()
 
 	var lastSize int64
-	lw.onReset = func() { lastSize = 0 }
 	var lastSentUUID string
 	var seq int
 	sentUUIDs := make(map[string]struct{})
+	lw.onReset = func() {
+		lastSize = 0
+		lastSentUUID = ""
+		sentUUIDs = make(map[string]struct{})
+	}
 
 	readAndEmit := func() bool {
 		if resolvePath != nil {

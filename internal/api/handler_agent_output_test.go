@@ -558,8 +558,8 @@ func TestAgentOutputStreamFollowsRotatedGeminiTranscriptAfterWake(t *testing.T) 
 
 	secondTranscript := filepath.Join(fixture.chats, "session-2026-04-17T03-15-after.json")
 	writeGeminiHistoryFixtureForAPI(t, secondTranscript, "after-session",
-		`{"id":"u2","timestamp":"2026-04-17T03:15:00Z","type":"user","content":"second-input"}`,
-		`{"id":"a2","timestamp":"2026-04-17T03:15:01Z","type":"gemini","content":"second-output"}`,
+		`{"id":"u1","timestamp":"2026-04-17T03:15:00Z","type":"user","content":"second-input"}`,
+		`{"id":"a1","timestamp":"2026-04-17T03:15:01Z","type":"gemini","content":"second-output"}`,
 	)
 	secondTime := time.Now().Add(-1 * time.Minute)
 	if err := os.Chtimes(secondTranscript, secondTime, secondTime); err != nil {
@@ -578,10 +578,10 @@ func TestAgentOutputStreamFollowsRotatedGeminiTranscriptAfterWake(t *testing.T) 
 	}
 
 	writeGeminiHistoryFixtureForAPI(t, secondTranscript, "after-session",
-		`{"id":"u2","timestamp":"2026-04-17T03:15:00Z","type":"user","content":"second-input"}`,
-		`{"id":"a2","timestamp":"2026-04-17T03:15:01Z","type":"gemini","content":"second-output"}`,
-		`{"id":"u3","timestamp":"2026-04-17T03:15:02Z","type":"user","content":"third-input"}`,
-		`{"id":"a3","timestamp":"2026-04-17T03:15:03Z","type":"gemini","content":"third-output"}`,
+		`{"id":"u1","timestamp":"2026-04-17T03:15:00Z","type":"user","content":"second-input"}`,
+		`{"id":"a1","timestamp":"2026-04-17T03:15:01Z","type":"gemini","content":"second-output"}`,
+		`{"id":"u2","timestamp":"2026-04-17T03:15:02Z","type":"user","content":"third-input"}`,
+		`{"id":"a2","timestamp":"2026-04-17T03:15:03Z","type":"gemini","content":"third-output"}`,
 	)
 	if err := os.Chtimes(secondTranscript, time.Now(), time.Now()); err != nil {
 		t.Fatalf("chtimes(updated second transcript): %v", err)
@@ -618,8 +618,8 @@ func TestCityScopedAgentOutputStreamFollowsRotatedGeminiTranscriptAfterWake(t *t
 
 	secondTranscript := filepath.Join(fixture.chats, "session-2026-04-17T03-15-after.json")
 	writeGeminiHistoryFixtureForAPI(t, secondTranscript, "after-session",
-		`{"id":"u2","timestamp":"2026-04-17T03:15:00Z","type":"user","content":"second-input"}`,
-		`{"id":"a2","timestamp":"2026-04-17T03:15:01Z","type":"gemini","content":"second-output"}`,
+		`{"id":"u1","timestamp":"2026-04-17T03:15:00Z","type":"user","content":"second-input"}`,
+		`{"id":"a1","timestamp":"2026-04-17T03:15:01Z","type":"gemini","content":"second-output"}`,
 	)
 	secondTime := time.Now().Add(-1 * time.Minute)
 	if err := os.Chtimes(secondTranscript, secondTime, secondTime); err != nil {
@@ -638,10 +638,10 @@ func TestCityScopedAgentOutputStreamFollowsRotatedGeminiTranscriptAfterWake(t *t
 	}
 
 	writeGeminiHistoryFixtureForAPI(t, secondTranscript, "after-session",
-		`{"id":"u2","timestamp":"2026-04-17T03:15:00Z","type":"user","content":"second-input"}`,
-		`{"id":"a2","timestamp":"2026-04-17T03:15:01Z","type":"gemini","content":"second-output"}`,
-		`{"id":"u3","timestamp":"2026-04-17T03:15:02Z","type":"user","content":"third-input"}`,
-		`{"id":"a3","timestamp":"2026-04-17T03:15:03Z","type":"gemini","content":"third-output"}`,
+		`{"id":"u1","timestamp":"2026-04-17T03:15:00Z","type":"user","content":"second-input"}`,
+		`{"id":"a1","timestamp":"2026-04-17T03:15:01Z","type":"gemini","content":"second-output"}`,
+		`{"id":"u2","timestamp":"2026-04-17T03:15:02Z","type":"user","content":"third-input"}`,
+		`{"id":"a2","timestamp":"2026-04-17T03:15:03Z","type":"gemini","content":"third-output"}`,
 	)
 	if err := os.Chtimes(secondTranscript, time.Now(), time.Now()); err != nil {
 		t.Fatalf("chtimes(updated second transcript): %v", err)

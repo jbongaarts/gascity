@@ -68,24 +68,32 @@ func (s *Server) resolveSessionStream(ctx context.Context, input *SessionStreamI
 // checkSessionStream is the precheck for GET /v0/session/{id}/stream.
 
 func (s *Server) checkSessionStream(ctx context.Context, input *SessionStreamInput) error {
-	_, err := s.resolveSessionStream(ctx, input)
-	return err
+	state, err := s.resolveSessionStream(ctx, input)
+	if err != nil {
+		return err
+	}
+	input.resolved = state
+	return nil
 }
 
 // streamSession is the SSE streaming callback for GET /v0/session/{id}/stream.
 
 func (s *Server) streamSession(hctx huma.Context, input *SessionStreamInput, send sse.Sender) {
 	reqCtx := hctx.Context()
-	state, err := s.resolveSessionStream(reqCtx, input)
-	if err != nil {
-		// Invariant violation: precheck passed, body resolve failed.
-		// Session vanished between precheck and streaming start, or a
-		// race we didn't anticipate. Headers are already committed so
-		// we can't return an HTTP error — log so the next debugger has
-		// a starting point instead of a mute disconnect.
-		log.Printf("api: session-stream: resolve failed after precheck city=%s id=%s: %v",
-			input.CityName, input.ID, err)
-		return
+	state := input.resolved
+	if state == nil {
+		var err error
+		state, err = s.resolveSessionStream(reqCtx, input)
+		if err != nil {
+			// Invariant violation: precheck passed, body resolve failed.
+			// Session vanished between precheck and streaming start, or a
+			// race we didn't anticipate. Headers are already committed so
+			// we can't return an HTTP error — log so the next debugger has
+			// a starting point instead of a mute disconnect.
+			log.Printf("api: session-stream: resolve failed after precheck city=%s id=%s: %v",
+				input.CityName, input.ID, err)
+			return
+		}
 	}
 	info := state.info
 	handle := state.handle
