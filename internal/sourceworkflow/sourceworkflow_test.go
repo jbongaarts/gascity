@@ -173,6 +173,82 @@ func TestListLiveRootsFiltersBySourceStoreRef(t *testing.T) {
 	}
 }
 
+func TestListLiveRootsIncludesGraphV2OnlyRoots(t *testing.T) {
+	// Regression: sling.IsWorkflowAttachment treats a bead as a workflow
+	// root if it carries gc.formula_contract=graph.v2 even without
+	// gc.kind=workflow. If ListLiveRoots queries only on gc.kind=workflow,
+	// such roots are invisible to the singleton scanner and --force can
+	// launch a duplicate root alongside the live one.
+	store := beads.NewMemStore()
+	graphRoot, err := store.Create(beads.Bead{
+		Title:  "graph.v2 root without gc.kind",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			"gc.formula_contract":     "graph.v2",
+			"gc.source_bead_id":       "BL-42",
+			SourceStoreRefMetadataKey: "rig:alpha",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create(graph-only): %v", err)
+	}
+
+	roots, err := ListLiveRoots(store, "BL-42", "rig:alpha", "rig:alpha")
+	if err != nil {
+		t.Fatalf("ListLiveRoots: %v", err)
+	}
+	if len(roots) != 1 {
+		t.Fatalf("ListLiveRoots(...) = %d roots, want 1 (graph.v2-only root must not be hidden)", len(roots))
+	}
+	if roots[0].ID != graphRoot.ID {
+		t.Fatalf("root ID = %q, want %q", roots[0].ID, graphRoot.ID)
+	}
+	if roots[0].Metadata["gc.formula_contract"] != "graph.v2" {
+		t.Fatalf("root gc.formula_contract = %q, want graph.v2", roots[0].Metadata["gc.formula_contract"])
+	}
+}
+
+func TestListLiveRootsExcludesNonWorkflowBeadsUnderSameSource(t *testing.T) {
+	// Beads tagged with gc.source_bead_id but not marked as workflow roots
+	// (neither gc.kind=workflow nor gc.formula_contract=graph.v2) must be
+	// filtered out — the source_bead_id label alone is not enough to promote
+	// a bead to a live root.
+	store := beads.NewMemStore()
+	realRoot, err := store.Create(beads.Bead{
+		Title:  "real workflow root",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			"gc.kind":                 "workflow",
+			"gc.source_bead_id":       "BL-42",
+			SourceStoreRefMetadataKey: "rig:alpha",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create(real root): %v", err)
+	}
+	if _, err := store.Create(beads.Bead{
+		Title:  "free-floating note about BL-42",
+		Type:   "task",
+		Status: "open",
+		Metadata: map[string]string{
+			"gc.source_bead_id":       "BL-42",
+			SourceStoreRefMetadataKey: "rig:alpha",
+		},
+	}); err != nil {
+		t.Fatalf("Create(note): %v", err)
+	}
+
+	roots, err := ListLiveRoots(store, "BL-42", "rig:alpha", "rig:alpha")
+	if err != nil {
+		t.Fatalf("ListLiveRoots: %v", err)
+	}
+	if len(roots) != 1 || roots[0].ID != realRoot.ID {
+		t.Fatalf("ListLiveRoots(...) = %#v, want exactly the real root %q", roots, realRoot.ID)
+	}
+}
+
 func TestListLiveRootsTreatsLegacyRootAsStoreScoped(t *testing.T) {
 	store := beads.NewMemStore()
 	if _, err := store.Create(beads.Bead{

@@ -251,8 +251,10 @@ func assertStoreRoutedTo(t *testing.T, store beads.Store, beadID, want string) {
 
 // sharedTestFormulaDir is a package-level temp directory containing minimal
 // formula TOML files for all formula names commonly used in sling tests.
-var sharedTestFormulaDir string
-var sharedTestCityDir string
+var (
+	sharedTestFormulaDir string
+	sharedTestCityDir    string
+)
 
 func init() {
 	dir, err := os.MkdirTemp("", "gc-sling-test-formulas-*")
@@ -1957,15 +1959,23 @@ title = "Do work"
 	opts.OnFormula = "graph-work"
 	code := doSlingBatch(opts, deps, q, stdout, stderr)
 
-	if code != 1 {
-		t.Fatalf("doSlingBatch returned %d, want 1; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	// Batch conflicts must use the same exit-3 contract as single-bead
+	// conflicts so users see the cleanup hint and know to run
+	// `gc workflow delete-source`. Before the adoption-review fixups
+	// batch returned exit 1 with no hint; that was the bug this PR
+	// exists to close for the batch path as well.
+	if code != 3 {
+		t.Fatalf("doSlingBatch returned %d, want 3 (exit-3 contract for batch conflict); stdout=%s stderr=%s", code, stdout.String(), stderr.String())
 	}
 	if len(runner.calls) != 0 {
 		t.Fatalf("graph workflow runner calls = %d, want 0; calls=%v", len(runner.calls), runner.calls)
 	}
 	errText := stderr.String()
 	if !strings.Contains(errText, "Failed BL-1: source bead BL-1 already has live workflow(s): wf-existing") {
-		t.Fatalf("stderr = %q, want conflict failure", errText)
+		t.Fatalf("stderr = %q, want per-child conflict summary", errText)
+	}
+	if !strings.Contains(errText, "gc workflow delete-source BL-1") {
+		t.Fatalf("stderr = %q, want cleanup hint for conflicted child", errText)
 	}
 	child, err := deps.Store.Get("BL-1")
 	if err != nil {

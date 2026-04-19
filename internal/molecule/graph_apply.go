@@ -19,10 +19,13 @@ import (
 // Set by the daemon config loader from [daemon] formula_v2.
 var graphApplyEnabled atomic.Bool
 
+// SetGraphApplyEnabled toggles the graph-batch apply path. Called from the
+// daemon config loader when [daemon] formula_v2 changes.
 func SetGraphApplyEnabled(enabled bool) {
 	graphApplyEnabled.Store(enabled)
 }
 
+// IsGraphApplyEnabled reports whether graph-batch apply is currently active.
 func IsGraphApplyEnabled() bool {
 	return graphApplyEnabled.Load()
 }

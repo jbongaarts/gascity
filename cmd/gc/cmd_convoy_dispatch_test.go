@@ -21,6 +21,82 @@ import (
 	"github.com/gastownhall/gascity/internal/sourceworkflow"
 )
 
+func TestOpenSourceWorkflowStoresSkipsBrokenRigs(t *testing.T) {
+	// Regression: when a single rig's bead store is unopenable (broken
+	// filesystem permissions, missing .gc directory, corrupt dolt, etc.),
+	// the previous implementation failed the whole source-workflow call
+	// site — so every graph-workflow launch and every workflow
+	// delete-source/reopen-source aborted city-wide. That turned a
+	// rig-local problem into a global outage. Now a broken non-selected
+	// rig is skipped in favor of any store that opens.
+	cityPath := "/city"
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Rigs: []config.Rig{
+			{Name: "alpha", Path: "rigs/alpha"},
+			{Name: "broken", Path: "rigs/broken"},
+		},
+	}
+
+	openStore := func(dir string) (beads.Store, error) {
+		if strings.Contains(dir, "rigs/broken") {
+			return nil, fmt.Errorf("simulated broken rig store at %s", dir)
+		}
+		return beads.NewMemStore(), nil
+	}
+
+	stores, skips, err := openSourceWorkflowStoresWith(cfg, cityPath, "", openStore)
+	if err != nil {
+		t.Fatalf("openSourceWorkflowStoresWith returned err = %v; want tolerance of broken rig", err)
+	}
+	if len(stores) == 0 {
+		t.Fatal("len(stores) = 0, want at least one store (city + alpha rig)")
+	}
+	for _, s := range stores {
+		if strings.Contains(s.path, "rigs/broken") {
+			t.Fatalf("broken rig should have been skipped, got path %q", s.path)
+		}
+	}
+	// The broken rig must appear in skips so callers can surface a warning.
+	// Without this, singleton coverage silently degrades.
+	foundBrokenSkip := false
+	for _, skip := range skips {
+		if strings.Contains(skip.path, "rigs/broken") {
+			foundBrokenSkip = true
+			break
+		}
+	}
+	if !foundBrokenSkip {
+		t.Fatalf("skips = %#v, want an entry for the broken rig so callers can warn", skips)
+	}
+	msg := formatSourceWorkflowStoreSkips(skips)
+	if !strings.Contains(msg, "rigs/broken") || !strings.Contains(msg, "invisible") {
+		t.Fatalf("format message = %q, want reference to broken rig and invisibility", msg)
+	}
+}
+
+func TestOpenSourceWorkflowStoresFailsOnlyWhenEverythingBroken(t *testing.T) {
+	// If every candidate store is unopenable, the singleton check cannot
+	// run safely — surface the first underlying error so the caller knows
+	// why. This is the only case where intolerance is correct.
+	cityPath := "/city"
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+	}
+
+	openStore := func(dir string) (beads.Store, error) {
+		return nil, fmt.Errorf("every store at %s is broken", dir)
+	}
+
+	_, _, err := openSourceWorkflowStoresWith(cfg, cityPath, "", openStore)
+	if err == nil {
+		t.Fatal("openSourceWorkflowStoresWith returned nil error; want underlying store failure")
+	}
+	if !strings.Contains(err.Error(), "every store") {
+		t.Fatalf("error = %v, want propagation of underlying failure", err)
+	}
+}
+
 type closeAllFailStore struct {
 	beads.Store
 	failOn map[string]struct{}
@@ -314,6 +390,161 @@ func TestCmdWorkflowDeleteSourceClosesMatchedRootsAndClearsWorkflowID(t *testing
 	}
 	if updatedChild.Status != "closed" {
 		t.Fatalf("child status = %q, want closed", updatedChild.Status)
+	}
+}
+
+func TestCmdWorkflowDeleteSourceClosesGraphV2OnlyRoot(t *testing.T) {
+	// Regression: after the ListLiveRoots contract fix, the singleton
+	// scanner surfaces graph.v2-only roots (marked with
+	// gc.formula_contract=graph.v2 and no gc.kind=workflow). But
+	// findWorkflowBeads — the cleanup collector called from
+	// collectSourceWorkflowMatches — still required gc.kind=workflow, so
+	// delete-source would list the root and close nothing. This is the
+	// exact root shape #720 exists to recover.
+	cityDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n\n[daemon]\nformula_v2 = true\n"), 0o644); err != nil {
+		t.Fatalf("write city.toml: %v", err)
+	}
+	t.Setenv("GC_CITY", cityDir)
+	t.Setenv("GC_BEADS", "file")
+	prevCityFlag := cityFlag
+	cityFlag = ""
+	t.Cleanup(func() { cityFlag = prevCityFlag })
+
+	store, err := openStoreAtForCity(cityDir, cityDir)
+	if err != nil {
+		t.Fatalf("openStoreAtForCity: %v", err)
+	}
+	source, err := store.Create(beads.Bead{Title: "Source", Type: "task", Status: "in_progress"})
+	if err != nil {
+		t.Fatalf("Create(source): %v", err)
+	}
+	// graph.v2-only root: no gc.kind=workflow label.
+	root, err := store.Create(beads.Bead{
+		Title:  "Graph workflow",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			"gc.formula_contract": "graph.v2",
+			"gc.source_bead_id":   source.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create(root): %v", err)
+	}
+	child, err := store.Create(beads.Bead{
+		Title:  "Child",
+		Type:   "task",
+		Status: "open",
+		Metadata: map[string]string{
+			"gc.root_bead_id": root.ID,
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create(child): %v", err)
+	}
+	if err := store.SetMetadata(source.ID, "workflow_id", root.ID); err != nil {
+		t.Fatalf("SetMetadata(workflow_id): %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdWorkflowDeleteSource(source.ID, sourceWorkflowStoreSelector{}, true, false, &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdWorkflowDeleteSource = %d; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "result=cleaned") {
+		t.Fatalf("stdout = %q, want cleaned result", stdout.String())
+	}
+
+	reloaded, err := openStoreAtForCity(cityDir, cityDir)
+	if err != nil {
+		t.Fatalf("openStoreAtForCity(reload): %v", err)
+	}
+	updatedRoot, err := reloaded.Get(root.ID)
+	if err != nil {
+		t.Fatalf("Get(root): %v", err)
+	}
+	if updatedRoot.Status != "closed" {
+		t.Fatalf("root status = %q, want closed (graph.v2-only root must be collected by findWorkflowBeads)", updatedRoot.Status)
+	}
+	updatedChild, err := reloaded.Get(child.ID)
+	if err != nil {
+		t.Fatalf("Get(child): %v", err)
+	}
+	if updatedChild.Status != "closed" {
+		t.Fatalf("child status = %q, want closed", updatedChild.Status)
+	}
+	updatedSource, err := reloaded.Get(source.ID)
+	if err != nil {
+		t.Fatalf("Get(source): %v", err)
+	}
+	if got := strings.TrimSpace(updatedSource.Metadata["workflow_id"]); got != "" {
+		t.Fatalf("source workflow_id = %q, want cleared", got)
+	}
+}
+
+func TestCmdWorkflowReopenSourceClearsRoutedToForResling(t *testing.T) {
+	// Regression: reopen-source is the documented recovery path for a
+	// closed/assigned source bead whose workflow died. It cleared
+	// workflow_id + status + assignee but left gc.routed_to populated.
+	// sling.CheckBeadState treats a bead with gc.routed_to == target as
+	// already-routed and short-circuits on idempotency — so a re-sling
+	// of the recovered bead to the same target appeared to succeed while
+	// producing no live workflow. Operators following the cleanup hint
+	// ended up silently stuck.
+	cityDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte("[workspace]\nname = \"test-city\"\n"), 0o644); err != nil {
+		t.Fatalf("write city.toml: %v", err)
+	}
+	t.Setenv("GC_CITY", cityDir)
+	t.Setenv("GC_BEADS", "file")
+	prevCityFlag := cityFlag
+	cityFlag = ""
+	t.Cleanup(func() { cityFlag = prevCityFlag })
+
+	store, err := openStoreAtForCity(cityDir, cityDir)
+	if err != nil {
+		t.Fatalf("openStoreAtForCity: %v", err)
+	}
+	source, err := store.Create(beads.Bead{Title: "Source", Type: "task", Status: "closed"})
+	if err != nil {
+		t.Fatalf("Create(source): %v", err)
+	}
+	// Simulate the state left behind by a previous sling that died:
+	// workflow_id pointed at a now-gone root, gc.routed_to still set.
+	if err := store.SetMetadata(source.ID, "workflow_id", "wf-gone"); err != nil {
+		t.Fatalf("SetMetadata(workflow_id): %v", err)
+	}
+	if err := store.SetMetadata(source.ID, "gc.routed_to", "mayor"); err != nil {
+		t.Fatalf("SetMetadata(gc.routed_to): %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdWorkflowReopenSource(source.ID, sourceWorkflowStoreSelector{}, &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdWorkflowReopenSource returned %d; stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "result=reopened") {
+		t.Fatalf("stdout = %q, want reopened result", stdout.String())
+	}
+
+	reloaded, err := openStoreAtForCity(cityDir, cityDir)
+	if err != nil {
+		t.Fatalf("openStoreAtForCity(reload): %v", err)
+	}
+	updated, err := reloaded.Get(source.ID)
+	if err != nil {
+		t.Fatalf("Get(source): %v", err)
+	}
+	if got := strings.TrimSpace(updated.Metadata["workflow_id"]); got != "" {
+		t.Fatalf("workflow_id = %q, want cleared", got)
+	}
+	if got := strings.TrimSpace(updated.Metadata["gc.routed_to"]); got != "" {
+		t.Fatalf("gc.routed_to = %q, want cleared (else re-sling hits idempotency short-circuit)", got)
+	}
+	if updated.Status != "open" {
+		t.Fatalf("status = %q, want open", updated.Status)
+	}
+	if updated.Assignee != "" {
+		t.Fatalf("assignee = %q, want empty", updated.Assignee)
 	}
 }
 
@@ -1463,8 +1694,7 @@ prefix = "BL"
 	prevCityFlag := cityFlag
 	cityFlag = ""
 	t.Cleanup(func() { cityFlag = prevCityFlag })
-	cityStore, err := openStoreAtForCity(cityDir, cityDir)
-	if err != nil {
+	if _, err := openStoreAtForCity(cityDir, cityDir); err != nil {
 		t.Fatalf("openStoreAtForCity(city init): %v", err)
 	}
 	if err := ensureScopedFileStoreLayout(cityDir); err != nil {
@@ -1473,7 +1703,7 @@ prefix = "BL"
 	if err := ensurePersistedScopeLocalFileStore(cityDir); err != nil {
 		t.Fatalf("ensurePersistedScopeLocalFileStore(city): %v", err)
 	}
-	cityStore, err = openStoreAtForCity(cityDir, cityDir)
+	cityStore, err := openStoreAtForCity(cityDir, cityDir)
 	if err != nil {
 		t.Fatalf("openStoreAtForCity(city scoped): %v", err)
 	}

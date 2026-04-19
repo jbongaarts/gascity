@@ -598,6 +598,10 @@ func withSourceWorkflowLaunchLock(ctx context.Context, deps SlingDeps, sourceBea
 		}
 		roots, err = listSourceWorkflowRoots(deps, sourceBeadID)
 		if err != nil {
+			// A transient store error while re-listing is recoverable:
+			// the finalize already succeeded, the lock is still held, and
+			// the underlying stores may briefly be unavailable. Warn and
+			// continue.
 			result.MetadataErrors = append(result.MetadataErrors,
 				fmt.Sprintf("verify live workflows for %s: %v", sourceBeadID, err))
 			return nil
@@ -605,21 +609,34 @@ func withSourceWorkflowLaunchLock(ctx context.Context, deps SlingDeps, sourceBea
 		if !slices.ContainsFunc(roots, func(root sourceWorkflowRoot) bool {
 			return sameWorkflowRoot(root, result.WorkflowID, launch.storeRef)
 		}) {
-			result.MetadataErrors = append(result.MetadataErrors,
-				fmt.Sprintf("workflow %s not visible for source bead %s after launch", result.WorkflowID, sourceBeadID))
+			// Under the held lock, a successful finalize that is not
+			// visible via ListLiveRoots is an invariant violation: either
+			// the new root was never persisted or it no longer matches
+			// the singleton predicate. This must NOT be demoted to a
+			// warning — callers that rely on exactly-one-live-root will
+			// otherwise proceed with a phantom success. Run the same
+			// rollback the finalize-failure path uses so superseded
+			// roots are restored and the source bead's workflow_id is
+			// reverted to previousWorkflowID; otherwise we leave the
+			// system in a worse state than the one the invariant check
+			// was supposed to catch.
+			invariantErr := fmt.Errorf("workflow %s not visible for source bead %s after launch", result.WorkflowID, sourceBeadID)
+			if rollbackErr := rollbackSourceWorkflowReplacement(launch, deps.Store, sourceBeadID, previousWorkflowID, restoreState); rollbackErr != nil {
+				return errors.Join(invariantErr, rollbackErr)
+			}
+			return invariantErr
 		}
 		return nil
 	})
 	return result, err
 }
 
-func attachBatchFormula(ctx context.Context, opts SlingOpts, deps SlingDeps, child beads.Bead, a config.Agent, formulaName, formulaLabel, method string) (SlingResult, error) {
+// attachBatchFormula launches one batch-child formula. The caller passes the
+// pre-computed isGraph flag from the one-shot formula compile at the top of
+// DoSlingBatch so that compiling N times for N children becomes a single
+// compile per batch.
+func attachBatchFormula(ctx context.Context, opts SlingOpts, deps SlingDeps, child beads.Bead, a config.Agent, formulaName, formulaLabel, method string, isGraph bool) (SlingResult, error) {
 	childVars := BuildSlingFormulaVars(formulaName, child.ID, opts.Vars, a, deps)
-	searchPaths := SlingFormulaSearchPaths(deps, a)
-	isGraph, err := isGraphSlingFormula(ctx, formulaName, searchPaths, childVars)
-	if err != nil {
-		return SlingResult{}, fmt.Errorf("instantiating %s %q on %s: %w", formulaLabel, formulaName, child.ID, err)
-	}
 	run := func() (SlingResult, error) {
 		mResult, err := InstantiateSlingFormula(ctx, formulaName, SlingFormulaSearchPaths(deps, a), molecule.Options{
 			Title:            opts.Title,
@@ -776,10 +793,16 @@ func DoSlingBatch(opts SlingOpts, deps SlingDeps, querier BeadChildQuerier) (Sli
 	if useFormula == "" && !opts.IsFormula && !opts.NoFormula && a.EffectiveDefaultSlingFormula() != "" {
 		useFormula = a.EffectiveDefaultSlingFormula()
 	}
+	// isGraph is computed once per batch and threaded into every per-child
+	// attachBatchFormula call. Previously the helper compiled the formula
+	// once here and again per child, turning an O(1) compile into O(N) disk
+	// reads + template expansions for an N-child batch.
+	var isGraph bool
 	if useFormula != "" {
 		formulaVars := BuildSlingFormulaVars(useFormula, "", opts.Vars, a, deps)
 		searchPaths := SlingFormulaSearchPaths(deps, a)
-		isGraph, err := isGraphSlingFormula(context.Background(), useFormula, searchPaths, formulaVars)
+		var err error
+		isGraph, err = isGraphSlingFormula(context.Background(), useFormula, searchPaths, formulaVars)
 		if err != nil {
 			return SlingResult{}, fmt.Errorf("instantiating formula %q on %s %s: %w", useFormula, b.Type, b.ID, err)
 		}
@@ -804,6 +827,11 @@ func DoSlingBatch(opts SlingOpts, deps SlingDeps, querier BeadChildQuerier) (Sli
 	routed := 0
 	failed := 0
 	idempotent := 0
+	// childErrors preserves typed child errors so errors.As at the top-level
+	// (cmdSling) can recover a *sourceworkflow.ConflictError emitted by any
+	// child and map it to exit code 3 + the cleanup hint. Stringifying into
+	// childResult.FailReason alone loses the type.
+	var childErrors []error
 	for _, child := range open {
 		childResult := SlingChildResult{BeadID: child.ID}
 
@@ -823,11 +851,12 @@ func DoSlingBatch(opts SlingOpts, deps SlingDeps, querier BeadChildQuerier) (Sli
 			if opts.OnFormula == "" {
 				formulaLabel = "default formula"
 			}
-			formulaResult, err := attachBatchFormula(context.Background(), opts, deps, child, a, useFormula, formulaLabel, batchMethod)
+			formulaResult, err := attachBatchFormula(context.Background(), opts, deps, child, a, useFormula, formulaLabel, batchMethod, isGraph)
 			if err != nil {
 				childResult.Failed = true
 				childResult.FailReason = err.Error()
 				batchResult.Children = append(batchResult.Children, childResult)
+				childErrors = append(childErrors, err)
 				telemetry.RecordSling(context.Background(), a.QualifiedName(), TargetType(&a), batchMethod, err)
 				failed++
 				continue
@@ -857,6 +886,7 @@ func DoSlingBatch(opts SlingOpts, deps SlingDeps, querier BeadChildQuerier) (Sli
 				childResult.Failed = true
 				childResult.FailReason = err.Error()
 				batchResult.Children = append(batchResult.Children, childResult)
+				childErrors = append(childErrors, err)
 				telemetry.RecordSling(context.Background(), a.QualifiedName(), TargetType(&a), batchMethod, err)
 				failed++
 				continue
@@ -867,6 +897,7 @@ func DoSlingBatch(opts SlingOpts, deps SlingDeps, querier BeadChildQuerier) (Sli
 				childResult.Failed = true
 				childResult.FailReason = err.Error()
 				batchResult.Children = append(batchResult.Children, childResult)
+				childErrors = append(childErrors, err)
 				telemetry.RecordSling(context.Background(), a.QualifiedName(), TargetType(&a), batchMethod, err)
 				failed++
 				continue
@@ -898,7 +929,13 @@ func DoSlingBatch(opts SlingOpts, deps SlingDeps, querier BeadChildQuerier) (Sli
 	}
 
 	if failed > 0 {
-		return batchResult, fmt.Errorf("%d/%d children failed", failed, len(open))
+		summary := fmt.Errorf("%d/%d children failed", failed, len(open))
+		// errors.Join threads typed child errors through Unwrap() []error so
+		// errors.As at the CLI/API boundary can recover *ConflictError and map
+		// it to exit 3 + the cleanup hint; the summary stays first for the
+		// human-readable message.
+		joined := append([]error{summary}, childErrors...)
+		return batchResult, errors.Join(joined...)
 	}
 	return batchResult, nil
 }

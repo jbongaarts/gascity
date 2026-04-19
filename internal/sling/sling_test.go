@@ -118,8 +118,10 @@ func testOpts(a config.Agent, beadOrFormula string) SlingOpts {
 	return SlingOpts{Target: a, BeadOrFormula: beadOrFormula}
 }
 
-var sharedTestFormulaDir string
-var sharedTestCityDir string
+var (
+	sharedTestFormulaDir string
+	sharedTestCityDir    string
+)
 
 func init() {
 	dir, err := os.MkdirTemp("", "gc-sling-test-formulas-*")
@@ -1372,6 +1374,319 @@ title = "Do work"
 	}
 	if got := updatedChild.Metadata["workflow_id"]; got != result.Children[0].WorkflowID {
 		t.Fatalf("child workflow_id = %q, want %q", got, result.Children[0].WorkflowID)
+	}
+}
+
+func TestDoSlingBatchPropagatesConflictErrorToCaller(t *testing.T) {
+	// Regression: DoSlingBatch captured per-child errors only as strings in
+	// SlingChildResult.FailReason and returned a generic "%d/%d children
+	// failed" at the end. That broke the top-level errors.As check in
+	// cmdSling, so batch users with live-workflow conflicts got exit 1
+	// instead of exit 3 and never saw the "gc workflow delete-source"
+	// cleanup hint — the whole user-facing point of the fix.
+	formulaDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(formulaDir, "graph-work.formula.toml"), []byte(`
+formula = "graph-work"
+version = 2
+
+[[steps]]
+id = "step"
+title = "Do work"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test"},
+		Daemon:    config.DaemonConfig{FormulaV2: true},
+		FormulaLayers: config.FormulaLayers{
+			City: []string{formulaDir},
+		},
+	}
+	prevFormulaV2 := formula.IsFormulaV2Enabled()
+	formula.SetFormulaV2Enabled(true)
+	t.Cleanup(func() { formula.SetFormulaV2Enabled(prevFormulaV2) })
+	config.InjectImplicitAgents(cfg)
+	deps := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+	store := deps.Store
+	convoy, err := store.Create(beads.Bead{Title: "convoy", Type: "convoy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := store.Create(beads.Bead{
+		Title:    "work",
+		Type:     "task",
+		ParentID: convoy.ID,
+		Status:   "open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Orphan live root: exists with gc.source_bead_id=child.ID, but the
+	// child's workflow_id pointer was never set (or was cleared by a
+	// previous recovery). The pre-check via CollectAttachedBeads reads
+	// workflow_id/molecule_id on the child, so it passes; the inner
+	// attachBatchFormula then acquires the source-workflow launch lock
+	// and discovers the orphan via ListLiveRoots — that's where the
+	// typed ConflictError originates.
+	existingRoot, err := store.Create(beads.Bead{
+		Title:  "orphan live workflow",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			"gc.kind":           "workflow",
+			"gc.source_bead_id": child.ID,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No --force: child hits the live-workflow singleton and attachBatchFormula
+	// returns *sourceworkflow.ConflictError. The batch wrapper must preserve
+	// the typed error so errors.As at the CLI boundary finds it.
+	_, err = DoSlingBatch(SlingOpts{
+		Target:        config.Agent{Name: "mayor", MaxActiveSessions: intPtr(1)},
+		BeadOrFormula: convoy.ID,
+		OnFormula:     "graph-work",
+	}, deps, store)
+	if err == nil {
+		t.Fatal("DoSlingBatch error = nil, want conflict from child")
+	}
+	var conflictErr *sourceworkflow.ConflictError
+	if !errors.As(err, &conflictErr) {
+		t.Fatalf("errors.As(ConflictError) = false; err = %v\n(regression: batch loses typed error → exit 1 instead of exit 3)", err)
+	}
+	if conflictErr.SourceBeadID != child.ID {
+		t.Fatalf("ConflictError.SourceBeadID = %q, want %q", conflictErr.SourceBeadID, child.ID)
+	}
+	if len(conflictErr.WorkflowIDs) != 1 || conflictErr.WorkflowIDs[0] != existingRoot.ID {
+		t.Fatalf("ConflictError.WorkflowIDs = %#v, want [%s]", conflictErr.WorkflowIDs, existingRoot.ID)
+	}
+}
+
+func TestDoSlingBatchPreflightEmitsConflictErrorForWorkflowAttachment(t *testing.T) {
+	// Regression: non-force batch with a graph formula whose child already
+	// has workflow_id pointing at a live workflow hit
+	// checkBatchNoMoleculeChildren, which returned a plain string error
+	// ("cannot use --on: beads already have attached molecules...") — so
+	// cmdSling's errors.As(&ConflictError) missed, returning exit 1 and
+	// dropping the `gc workflow delete-source` cleanup hint. Users saw
+	// a generic error and didn't know the recovery command existed. The
+	// pre-check now emits a typed ConflictError alongside the legacy
+	// summary so errors.As succeeds at the CLI boundary.
+	formulaDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(formulaDir, "graph-work.formula.toml"), []byte(`
+formula = "graph-work"
+version = 2
+
+[[steps]]
+id = "step"
+title = "Do work"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test"},
+		Daemon:    config.DaemonConfig{FormulaV2: true},
+		FormulaLayers: config.FormulaLayers{
+			City: []string{formulaDir},
+		},
+	}
+	prevFormulaV2 := formula.IsFormulaV2Enabled()
+	formula.SetFormulaV2Enabled(true)
+	t.Cleanup(func() { formula.SetFormulaV2Enabled(prevFormulaV2) })
+	config.InjectImplicitAgents(cfg)
+	deps := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+	store := deps.Store
+	convoy, err := store.Create(beads.Bead{Title: "convoy", Type: "convoy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := store.Create(beads.Bead{
+		Title:    "work",
+		Type:     "task",
+		ParentID: convoy.ID,
+		Status:   "open",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Live workflow attachment: child.workflow_id set, which is the
+	// regular "user already launched this" case the pre-check catches.
+	existingRoot, err := store.Create(beads.Bead{
+		Title:  "existing live workflow",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			"gc.kind":           "workflow",
+			"gc.source_bead_id": child.ID,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetMetadata(child.ID, "workflow_id", existingRoot.ID); err != nil {
+		t.Fatalf("SetMetadata(workflow_id): %v", err)
+	}
+
+	// No --force: pre-check rejects via checkBatchNoMoleculeChildren.
+	// The returned error must expose *ConflictError via errors.As so
+	// cmdSling can return exit 3 and print the cleanup hint.
+	_, err = DoSlingBatch(SlingOpts{
+		Target:        config.Agent{Name: "mayor", MaxActiveSessions: intPtr(1)},
+		BeadOrFormula: convoy.ID,
+		OnFormula:     "graph-work",
+	}, deps, store)
+	if err == nil {
+		t.Fatal("DoSlingBatch error = nil, want pre-check rejection")
+	}
+	var conflictErr *sourceworkflow.ConflictError
+	if !errors.As(err, &conflictErr) {
+		t.Fatalf("errors.As(ConflictError) = false; err = %v\n(regression: batch preflight still returns plain string)", err)
+	}
+	if conflictErr.SourceBeadID != child.ID {
+		t.Fatalf("ConflictError.SourceBeadID = %q, want %q", conflictErr.SourceBeadID, child.ID)
+	}
+	if len(conflictErr.WorkflowIDs) != 1 || conflictErr.WorkflowIDs[0] != existingRoot.ID {
+		t.Fatalf("ConflictError.WorkflowIDs = %#v, want [%s]", conflictErr.WorkflowIDs, existingRoot.ID)
+	}
+}
+
+func TestDoSlingBatchPreflightEmitsPerChildConflictErrors(t *testing.T) {
+	// Regression: iter-3's batch preflight fix collapsed N conflicting
+	// children into a single ConflictError keyed to the first child,
+	// which misattributed every other child's blocking workflow IDs.
+	// The cleanup hint then only addressed the first child; users
+	// running it saw unrelated workflow IDs and failed to clean up the
+	// rest of the batch. The preflight now emits one ConflictError per
+	// conflicted child via errors.Join so each child's blocking IDs
+	// stay correctly attributed.
+	formulaDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(formulaDir, "graph-work.formula.toml"), []byte(`
+formula = "graph-work"
+version = 2
+
+[[steps]]
+id = "step"
+title = "Do work"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test"},
+		Daemon:    config.DaemonConfig{FormulaV2: true},
+		FormulaLayers: config.FormulaLayers{
+			City: []string{formulaDir},
+		},
+	}
+	prevFormulaV2 := formula.IsFormulaV2Enabled()
+	formula.SetFormulaV2Enabled(true)
+	t.Cleanup(func() { formula.SetFormulaV2Enabled(prevFormulaV2) })
+	config.InjectImplicitAgents(cfg)
+	deps := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+	store := deps.Store
+
+	convoy, err := store.Create(beads.Bead{Title: "convoy", Type: "convoy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two children, each with their own live workflow attachment.
+	child1, err := store.Create(beads.Bead{Title: "work-1", Type: "task", ParentID: convoy.ID, Status: "open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child2, err := store.Create(beads.Bead{Title: "work-2", Type: "task", ParentID: convoy.ID, Status: "open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	root1, err := store.Create(beads.Bead{
+		Title:  "workflow-1",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			"gc.kind":           "workflow",
+			"gc.source_bead_id": child1.ID,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root2, err := store.Create(beads.Bead{
+		Title:  "workflow-2",
+		Type:   "task",
+		Status: "in_progress",
+		Metadata: map[string]string{
+			"gc.kind":           "workflow",
+			"gc.source_bead_id": child2.ID,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetMetadata(child1.ID, "workflow_id", root1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetMetadata(child2.ID, "workflow_id", root2.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = DoSlingBatch(SlingOpts{
+		Target:        config.Agent{Name: "mayor", MaxActiveSessions: intPtr(1)},
+		BeadOrFormula: convoy.ID,
+		OnFormula:     "graph-work",
+	}, deps, store)
+	if err == nil {
+		t.Fatal("DoSlingBatch error = nil, want preflight rejection")
+	}
+
+	// Walk the error tree and collect every typed ConflictError. Both
+	// children should appear with their own root IDs — the critical
+	// invariant is that root2.ID is NOT attributed to child1.ID.
+	var collected []*sourceworkflow.ConflictError
+	{
+		var walk func(error)
+		walk = func(e error) {
+			if e == nil {
+				return
+			}
+			// Test walker intentionally uses direct type assertion to
+			// collect every ConflictError in the tree (errors.As collapses
+			// to the first match). See collectConflictErrors in cmd/gc.
+			if c, ok := e.(*sourceworkflow.ConflictError); ok { //nolint:errorlint
+				collected = append(collected, c)
+			}
+			type mu interface{ Unwrap() []error }
+			if m, ok := e.(mu); ok { //nolint:errorlint
+				for _, child := range m.Unwrap() {
+					walk(child)
+				}
+				return
+			}
+			if inner := errors.Unwrap(e); inner != nil {
+				walk(inner)
+			}
+		}
+		walk(err)
+	}
+
+	if len(collected) != 2 {
+		t.Fatalf("ConflictError count = %d, want 2 (one per conflicted child)", len(collected))
+	}
+
+	byChild := map[string][]string{}
+	for _, c := range collected {
+		byChild[c.SourceBeadID] = c.WorkflowIDs
+	}
+	if got := byChild[child1.ID]; len(got) != 1 || got[0] != root1.ID {
+		t.Fatalf("child1 ConflictError.WorkflowIDs = %#v, want [%s]", got, root1.ID)
+	}
+	if got := byChild[child2.ID]; len(got) != 1 || got[0] != root2.ID {
+		t.Fatalf("child2 ConflictError.WorkflowIDs = %#v, want [%s]", got, root2.ID)
 	}
 }
 

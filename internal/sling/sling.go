@@ -75,6 +75,9 @@ type BeadRouter interface {
 	Route(ctx context.Context, req RouteRequest) error
 }
 
+// SourceWorkflowStore is one entry from the list of bead stores the sling
+// layer should consult when enforcing source-workflow singleton invariants.
+// StoreRef identifies the store scope (e.g. "city:foo" / "rig:alpha").
 type SourceWorkflowStore struct {
 	Store    beads.Store
 	StoreRef string

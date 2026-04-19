@@ -1,6 +1,7 @@
 package sling
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -223,16 +224,35 @@ func CheckBatchNoMoleculeChildren(q BeadChildQuerier, open []beads.Bead, store b
 	return checkBatchNoMoleculeChildren(q, open, store, result, false)
 }
 
+// CheckNoMoleculeChildrenAllowLiveWorkflow is like CheckNoMoleculeChildren
+// but permits an existing live workflow attachment (used on --force graph
+// launches that will supersede the existing root under the source-workflow
+// lock).
 func CheckNoMoleculeChildrenAllowLiveWorkflow(q BeadQuerier, beadID string, store beads.Store, result *SlingResult) error {
 	return checkNoMoleculeChildren(q, beadID, store, result, true)
 }
 
+// CheckBatchNoMoleculeChildrenAllowLiveWorkflow is the batch variant of
+// CheckNoMoleculeChildrenAllowLiveWorkflow.
 func CheckBatchNoMoleculeChildrenAllowLiveWorkflow(q BeadChildQuerier, open []beads.Bead, store beads.Store, result *SlingResult) error {
 	return checkBatchNoMoleculeChildren(q, open, store, result, true)
 }
 
 func checkBatchNoMoleculeChildren(q BeadChildQuerier, open []beads.Bead, store beads.Store, result *SlingResult, allowLiveWorkflow bool) error {
 	var problems []string
+	// workflowConflicts tracks children whose already-attached root is a
+	// live workflow. We emit a typed *sourceworkflow.ConflictError for
+	// those so the CLI/API boundary returns exit 3 + the cleanup hint;
+	// without this, users see a generic "cannot use --on" string and
+	// never learn about `gc workflow delete-source`. The first child's
+	// conflict becomes the typed payload; a combined non-typed error
+	// keeps the legacy message so existing "%d/%d" diagnostics stay
+	// readable.
+	type workflowConflict struct {
+		childID    string
+		workflowID string
+	}
+	var workflowConflicts []workflowConflict
 	for _, child := range open {
 		attachments, err := CollectAttachedBeads(child, store, q)
 		if err != nil && len(attachments) == 0 {
@@ -248,6 +268,7 @@ func checkBatchNoMoleculeChildren(q BeadChildQuerier, open []beads.Bead, store b
 					continue
 				}
 				problems = append(problems, fmt.Sprintf("%s (has %s %s)", child.ID, AttachmentLabel(attached), attached.ID))
+				workflowConflicts = append(workflowConflicts, workflowConflict{childID: child.ID, workflowID: attached.ID})
 				continue
 			}
 			if childUnassigned && store != nil {
@@ -262,11 +283,39 @@ func checkBatchNoMoleculeChildren(q BeadChildQuerier, open []beads.Bead, store b
 			problems = append(problems, fmt.Sprintf("%s (has %s %s)", child.ID, AttachmentLabel(attached), attached.ID))
 		}
 	}
-	if len(problems) > 0 {
-		return fmt.Errorf("cannot use --on: beads already have attached molecules: %s",
-			strings.Join(problems, ", "))
+	if len(problems) == 0 {
+		return nil
 	}
-	return nil
+	summary := fmt.Errorf("cannot use --on: beads already have attached molecules: %s",
+		strings.Join(problems, ", "))
+	if len(workflowConflicts) == 0 {
+		return summary
+	}
+	// Emit one typed ConflictError per conflicted child so cleanup hints
+	// stay correctly attributed. Collapsing into a single error keyed to
+	// the first child misreports which source bead owns each blocking
+	// workflow — users running the suggested `gc workflow delete-source
+	// <first-child>` command would see unrelated workflow IDs and only
+	// clean up part of the batch. Group blocking workflow IDs by child,
+	// then join them alongside the legacy summary; the CLI walks the
+	// error chain to render one cleanup hint per affected child.
+	conflictsByChild := make(map[string][]string, len(workflowConflicts))
+	childOrder := make([]string, 0, len(workflowConflicts))
+	for _, c := range workflowConflicts {
+		if _, seen := conflictsByChild[c.childID]; !seen {
+			childOrder = append(childOrder, c.childID)
+		}
+		conflictsByChild[c.childID] = append(conflictsByChild[c.childID], c.workflowID)
+	}
+	joined := make([]error, 0, len(childOrder)+1)
+	for _, childID := range childOrder {
+		joined = append(joined, &sourceworkflow.ConflictError{
+			SourceBeadID: childID,
+			WorkflowIDs:  conflictsByChild[childID],
+		})
+	}
+	joined = append(joined, summary)
+	return errors.Join(joined...)
 }
 
 // CheckBeadState checks whether a bead is already routed and returns a

@@ -1,3 +1,11 @@
+// Package sourceworkflow provides primitives for enforcing the "one live
+// graph workflow per source bead" invariant. It owns the singleton scanner
+// (ListLiveRoots), the cross-process launch lock (WithLock), the conflict
+// error type (ConflictError), and helpers for snapshotting / closing /
+// restoring workflow subtrees during force-replacement flows. Callers in
+// internal/sling and cmd/gc use this package to gate graph launches and
+// to drive the `gc workflow delete-source` / `reopen-source` recovery
+// commands.
 package sourceworkflow
 
 import (
@@ -18,12 +26,29 @@ import (
 	"github.com/gastownhall/gascity/internal/citylayout"
 )
 
+// ConflictError is returned when a graph workflow launch is blocked by one
+// or more already-live workflow roots for the same source bead. The CLI
+// maps this to exit code 3 and renders a `gc workflow delete-source`
+// cleanup hint; the API maps it to HTTP 409.
 type ConflictError struct {
 	SourceBeadID string
 	WorkflowIDs  []string
 }
 
+// SourceStoreRefMetadataKey is the bead metadata key recording which store
+// a workflow root's source bead lives in (e.g. "city:foo" or "rig:alpha").
+// Used by WorkflowMatchesSource to scope cross-store singleton checks.
 const SourceStoreRefMetadataKey = "gc.source_store_ref"
+
+// IsWorkflowRoot reports whether a bead is a source-workflow root. It must
+// stay in sync with sling.IsWorkflowAttachment: roots may be marked via the
+// legacy gc.kind=workflow label, via gc.formula_contract=graph.v2, or both.
+// Queries that only match one label miss graph.v2-only roots and allow
+// --force to spawn duplicates.
+func IsWorkflowRoot(b beads.Bead) bool {
+	return strings.EqualFold(strings.TrimSpace(b.Metadata["gc.kind"]), "workflow") ||
+		strings.EqualFold(strings.TrimSpace(b.Metadata["gc.formula_contract"]), "graph.v2")
+}
 
 func (e *ConflictError) Error() string {
 	if e == nil {
@@ -39,14 +64,21 @@ func (e *ConflictError) Error() string {
 	)
 }
 
+// NormalizeSourceBeadID trims whitespace from a source bead ID so equality
+// checks don't fail on stray spaces from user-entered labels.
 func NormalizeSourceBeadID(sourceBeadID string) string {
 	return strings.TrimSpace(sourceBeadID)
 }
 
+// NormalizeSourceStoreRef trims whitespace from a store ref for comparison.
 func NormalizeSourceStoreRef(sourceStoreRef string) string {
 	return strings.TrimSpace(sourceStoreRef)
 }
 
+// WorkflowMatchesSource reports whether a workflow root belongs to the
+// given source bead and (optionally) a specific source store ref. Legacy
+// roots without SourceStoreRefMetadataKey are treated as belonging to the
+// store they physically live in (rootStoreRef).
 func WorkflowMatchesSource(root beads.Bead, sourceBeadID, sourceStoreRef, rootStoreRef string) bool {
 	sourceBeadID = NormalizeSourceBeadID(sourceBeadID)
 	if sourceBeadID == "" {
@@ -70,6 +102,10 @@ func WorkflowMatchesSource(root beads.Bead, sourceBeadID, sourceStoreRef, rootSt
 	return rootStoreRef == sourceStoreRef
 }
 
+// ListLiveRoots returns the live (not-closed) workflow roots in store that
+// belong to sourceBeadID, scoped to sourceStoreRef when set. The query
+// indexes on gc.source_bead_id and filters via IsWorkflowRoot so both
+// legacy gc.kind=workflow roots and graph.v2-only roots are visible.
 func ListLiveRoots(store beads.Store, sourceBeadID, sourceStoreRef, rootStoreRef string) ([]beads.Bead, error) {
 	sourceBeadID = NormalizeSourceBeadID(sourceBeadID)
 	if store == nil || sourceBeadID == "" {
@@ -77,7 +113,6 @@ func ListLiveRoots(store beads.Store, sourceBeadID, sourceStoreRef, rootStoreRef
 	}
 	roots, err := store.List(beads.ListQuery{
 		Metadata: map[string]string{
-			"gc.kind":           "workflow",
 			"gc.source_bead_id": sourceBeadID,
 		},
 	})
@@ -85,6 +120,9 @@ func ListLiveRoots(store beads.Store, sourceBeadID, sourceStoreRef, rootStoreRef
 		return nil, err
 	}
 	roots = slices.DeleteFunc(roots, func(root beads.Bead) bool {
+		if !IsWorkflowRoot(root) {
+			return true
+		}
 		return !WorkflowMatchesSource(root, sourceBeadID, sourceStoreRef, rootStoreRef)
 	})
 	slices.SortFunc(roots, func(a, b beads.Bead) int {
@@ -93,6 +131,8 @@ func ListLiveRoots(store beads.Store, sourceBeadID, sourceStoreRef, rootStoreRef
 	return roots, nil
 }
 
+// BlockingWorkflowIDs extracts sorted root IDs from a list of blocking
+// workflows for rendering in ConflictError messages and cleanup hints.
 func BlockingWorkflowIDs(roots []beads.Bead) []string {
 	ids := make([]string, 0, len(roots))
 	for _, root := range roots {
@@ -117,6 +157,10 @@ type localLock struct {
 	refs  int
 }
 
+// WithLock acquires a per-source-bead lock (in-process mutex + on-disk
+// flock) rooted at cityPath before invoking fn. Guarantees at-most-one
+// concurrent graph-workflow launch or recovery per (scopeRef, sourceBeadID)
+// across processes. Honors ctx cancellation for both mutex and flock waits.
 func WithLock(ctx context.Context, cityPath, scopeRef, sourceBeadID string, fn func() error) error {
 	sourceBeadID = NormalizeSourceBeadID(sourceBeadID)
 	if sourceBeadID == "" {
@@ -249,6 +293,9 @@ func canonicalScopeRef(scopeRef string) string {
 	return scopeRef
 }
 
+// ListWorkflowBeads returns the root and all descendant beads tagged with
+// gc.root_bead_id=rootID (closed included). Used by CloseWorkflowSubtree
+// and force-replacement snapshot/restore.
 func ListWorkflowBeads(store beads.Store, rootID string) ([]beads.Bead, error) {
 	rootID = strings.TrimSpace(rootID)
 	if store == nil || rootID == "" {
@@ -283,6 +330,9 @@ func ListWorkflowBeads(store beads.Store, rootID string) ([]beads.Bead, error) {
 	return out, nil
 }
 
+// CloseWorkflowSubtree closes the root and every open descendant of a
+// workflow, marking each gc.outcome=skipped. Returns the count of newly
+// closed beads.
 func CloseWorkflowSubtree(store beads.Store, rootID string) (int, error) {
 	matched, err := ListWorkflowBeads(store, rootID)
 	if err != nil {
@@ -301,6 +351,9 @@ func CloseWorkflowSubtree(store beads.Store, rootID string) (int, error) {
 	return store.CloseAll(ids, map[string]string{"gc.outcome": "skipped"})
 }
 
+// WorkflowBeadSnapshot captures the mutable fields of a workflow subtree
+// bead so force-replacement can restore them if the replacement's finalize
+// or post-finalize invariant check fails.
 type WorkflowBeadSnapshot struct {
 	ID       string
 	Status   string
@@ -308,6 +361,9 @@ type WorkflowBeadSnapshot struct {
 	Outcome  string
 }
 
+// SnapshotOpenWorkflowBeads records the status/assignee/outcome of every
+// open bead in a workflow subtree, used to roll back a force-replacement
+// on finalize failure.
 func SnapshotOpenWorkflowBeads(store beads.Store, rootID string) ([]WorkflowBeadSnapshot, error) {
 	matched, err := ListWorkflowBeads(store, rootID)
 	if err != nil {
@@ -328,6 +384,9 @@ func SnapshotOpenWorkflowBeads(store beads.Store, rootID string) ([]WorkflowBead
 	return out, nil
 }
 
+// RestoreWorkflowBeads re-applies a prior WorkflowBeadSnapshot set.
+// Continues past individual failures and joins them into one error so the
+// caller sees every restoration problem at once.
 func RestoreWorkflowBeads(store beads.Store, snapshots []WorkflowBeadSnapshot) error {
 	var restoreErr error
 	for _, snapshot := range snapshots {

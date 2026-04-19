@@ -323,9 +323,16 @@ func cmdSling(args []string, isFormula, doNudge, force bool, title string, vars 
 		Store:    store,
 		StoreRef: storeRef,
 		SourceWorkflowStores: func() ([]sling.SourceWorkflowStore, error) {
-			stores, err := openSourceWorkflowStores(cfg, cityPath, "")
+			stores, skips, err := openSourceWorkflowStores(cfg, cityPath, "")
 			if err != nil {
 				return nil, err
+			}
+			if len(skips) > 0 {
+				// The sling callback cannot push into SlingResult from
+				// this depth, but stderr is the only channel operators
+				// look at; silence here means singleton coverage can
+				// degrade without any breadcrumb.
+				fmt.Fprintln(stderr, "warning:", formatSourceWorkflowStoreSkips(skips)) //nolint:errcheck
 			}
 			out := make([]sling.SourceWorkflowStore, 0, len(stores))
 			for _, storeView := range stores {
@@ -669,12 +676,25 @@ func doSlingBatch(opts slingOpts, deps slingDeps, querier BeadChildQuerier, stdo
 		printSlingResult(result, stdout, stderr)
 	}
 	if err != nil {
-		var conflictErr *sourceworkflow.ConflictError
-		if errors.As(err, &conflictErr) {
-			printSourceWorkflowConflict(stderr, conflictErr, deps.StoreRef)
+		// Batch can surface multiple typed conflicts (one per conflicted
+		// child) via errors.Join. Walking the tree renders a cleanup
+		// hint per affected source bead so a user with N conflicting
+		// children sees N cleanup commands instead of a single hint
+		// misattributed to the first child.
+		if printed := printSourceWorkflowConflicts(stderr, err, deps.StoreRef); printed > 0 {
 			return 3
 		}
-		fmt.Fprintln(stderr, err) //nolint:errcheck
+		// In batch mode, per-child FailReasons have already been rendered
+		// by printBatchSlingResult above. The error returned from
+		// DoSlingBatch is an errors.Join of a "N/M children failed"
+		// summary plus each child's typed error (kept for errors.As),
+		// so printing it verbatim duplicates every child line. Summarize
+		// instead when we have per-child detail.
+		if len(result.Children) > 0 {
+			fmt.Fprintf(stderr, "%d/%d children failed\n", result.Failed, result.Failed+result.Routed+result.IdempotentCt) //nolint:errcheck
+		} else {
+			fmt.Fprintln(stderr, err) //nolint:errcheck
+		}
 		return 1
 	}
 	if result.DryRun {
@@ -714,17 +734,57 @@ func printSourceWorkflowConflict(stderr io.Writer, conflictErr *sourceworkflow.C
 	if conflictErr == nil {
 		return
 	}
-	fmt.Fprintf(
+	_, _ = fmt.Fprintf(
 		stderr,
 		"gc sling: source bead %s already has live workflow(s): %s\n",
 		conflictErr.SourceBeadID,
 		strings.Join(conflictErr.WorkflowIDs, ","),
-	) //nolint:errcheck
-	fmt.Fprintf(
+	)
+	_, _ = fmt.Fprintf(
 		stderr,
 		"gc sling: use --force to override, or %s to clean up\n",
 		sourceWorkflowCleanupCommand(conflictErr.SourceBeadID, storeRef),
-	) //nolint:errcheck
+	)
+}
+
+// printSourceWorkflowConflicts renders every *ConflictError in the error
+// chain. Batch preflight emits one ConflictError per conflicted child via
+// errors.Join; printing only the first (via errors.As) misattributes the
+// later children's blocking roots to the first child and suggests a
+// cleanup command that can only fix part of the batch.
+func printSourceWorkflowConflicts(stderr io.Writer, err error, storeRef string) (printed int) {
+	collectConflictErrors(err, func(c *sourceworkflow.ConflictError) {
+		printSourceWorkflowConflict(stderr, c, storeRef)
+		printed++
+	})
+	return printed
+}
+
+// collectConflictErrors walks an error tree (including errors.Join trees)
+// and invokes visit for each *sourceworkflow.ConflictError encountered
+// exactly once. Walks nodes directly via type assertion + Unwrap to avoid
+// the errors.As "first match in chain" behavior which would double-visit
+// conflicts that are themselves members of a multi-error.
+func collectConflictErrors(err error, visit func(*sourceworkflow.ConflictError)) {
+	if err == nil {
+		return
+	}
+	// Intentional direct type assertion (not errors.As) so each node in the
+	// error tree is visited exactly once — errors.As returns the first match
+	// in the chain and we'd lose later ConflictErrors joined via errors.Join.
+	if c, ok := err.(*sourceworkflow.ConflictError); ok { //nolint:errorlint
+		visit(c)
+	}
+	type multiUnwrap interface{ Unwrap() []error }
+	if mu, ok := err.(multiUnwrap); ok { //nolint:errorlint
+		for _, child := range mu.Unwrap() {
+			collectConflictErrors(child, visit)
+		}
+		return
+	}
+	if inner := errors.Unwrap(err); inner != nil {
+		collectConflictErrors(inner, visit)
+	}
 }
 
 // buildSlingFormulaVars merges caller-provided vars with the runtime context

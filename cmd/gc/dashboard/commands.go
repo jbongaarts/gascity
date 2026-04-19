@@ -93,6 +93,21 @@ var BlockedPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`\bclean\b`),
 }
 
+// forceFlagPattern matches --force as a standalone flag (with word
+// boundary) so it doesn't misfire on --force-with-lease and friends.
+var forceFlagPattern = regexp.MustCompile(`--force\b`)
+
+// ForceAllowedCommands is the set of base commands permitted to carry
+// `--force` through the dashboard gateway. Any other command that passes
+// `--force` is rejected up front — a whitelisted command can still be
+// dangerous when combined with --force, so we keep this check narrow and
+// explicit rather than relying on command authors to remember which flags
+// are safe. Add a new entry only after reviewing what --force does for
+// that specific command.
+var ForceAllowedCommands = map[string]bool{
+	"sling": true,
+}
+
 // ValidateCommand checks if a command is allowed to run from the dashboard.
 func ValidateCommand(rawCommand string) (*CommandMeta, error) {
 	rawCommand = strings.TrimSpace(rawCommand)
@@ -110,6 +125,14 @@ func ValidateCommand(rawCommand string) (*CommandMeta, error) {
 	meta, ok := AllowedCommands[baseCmd]
 	if !ok {
 		return nil, fmt.Errorf("command not in whitelist: %s", baseCmd)
+	}
+
+	// Defense-in-depth: --force bypasses singleton checks and idempotency
+	// short-circuits. Only specific commands have a well-understood --force
+	// semantics worth exposing through the dashboard; everything else gets
+	// rejected even if the base command is whitelisted.
+	if forceFlagPattern.MatchString(rawCommand) && !ForceAllowedCommands[baseCmd] {
+		return nil, fmt.Errorf("--force is not permitted for command %q from the dashboard", baseCmd)
 	}
 
 	return &meta, nil

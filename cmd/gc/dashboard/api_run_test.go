@@ -9,6 +9,32 @@ import (
 	"time"
 )
 
+func TestValidateCommandAllowsForceOnSling(t *testing.T) {
+	// --force is dangerous in general (bypasses singleton + idempotency
+	// checks) but legitimate on `sling` specifically. The dashboard
+	// permits --force only on explicitly-allowed commands.
+	if _, err := ValidateCommand("sling BL-42 mayor --force"); err != nil {
+		t.Fatalf("ValidateCommand(sling --force): %v, want ok", err)
+	}
+}
+
+func TestValidateCommandRejectsForceOnNonAllowedCommands(t *testing.T) {
+	// Regression: PR #852 removed --force from BlockedPatterns so sling
+	// could use it. Without scoping, any future whitelisted command could
+	// accidentally inherit remote-execution risk when combined with
+	// --force. The scoping check rejects --force on commands not in
+	// ForceAllowedCommands.
+	for _, cmd := range []string{
+		"convoy refresh convoy-1 --force",
+		"unsling BL-42 --force",
+		"hook attach BL-42 --force",
+	} {
+		if _, err := ValidateCommand(cmd); err == nil {
+			t.Fatalf("ValidateCommand(%q) = nil, want rejection of --force", cmd)
+		}
+	}
+}
+
 func TestValidateCommandMarksBeadQueriesAPIOnly(t *testing.T) {
 	meta, err := ValidateCommand("list")
 	if err != nil {
