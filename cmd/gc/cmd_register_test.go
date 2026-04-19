@@ -303,3 +303,30 @@ func TestDoCities(t *testing.T) {
 		t.Errorf("expected 'bright-lights' in output, got: %s", stdout.String())
 	}
 }
+
+func TestCitiesListSubcommandAliasesDefaultAction(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("GC_HOME", dir)
+
+	cityPath := filepath.Join(dir, "bright-lights")
+	if err := os.MkdirAll(cityPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"), []byte("[workspace]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := supervisor.NewRegistry(supervisor.RegistryPath())
+	if err := reg.Register(cityPath, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd := newCitiesCmd(&stdout, &stderr)
+	cmd.SetArgs([]string{"list"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("gc cities list failed: %v\nstderr: %s", err, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "bright-lights") {
+		t.Errorf("expected 'bright-lights' in output, got: %s", stdout.String())
+	}
+}

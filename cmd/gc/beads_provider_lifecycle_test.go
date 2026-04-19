@@ -280,6 +280,92 @@ func TestEnsureBeadsProvider_execDoesNotMaskStartErrorWithHealth(t *testing.T) {
 	}
 }
 
+func TestEnsureBeadsProvider_execDoesNotReclassifyProviderAfterStart(t *testing.T) {
+	dir := t.TempDir()
+	callLog := filepath.Join(dir, "provider.log")
+	marker := filepath.Join(dir, "started")
+	release := filepath.Join(dir, "release")
+	script := filepath.Join(dir, "provider.sh")
+	content := "#!/bin/sh\n" +
+		"set -eu\n" +
+		"echo \"$1\" >> \"" + callLog + "\"\n" +
+		"case \"${1:-}\" in\n" +
+		"  start)\n" +
+		"    : > \"" + marker + "\"\n" +
+		"    i=0\n" +
+		"    while [ ! -f \"" + release + "\" ]; do\n" +
+		"      i=$((i + 1))\n" +
+		"      [ \"$i\" -le 1000 ] || exit 42\n" +
+		"      sleep 0.01\n" +
+		"    done\n" +
+		"    echo 'signal: terminated' >&2\n" +
+		"    exit 1\n" +
+		"    ;;\n" +
+		"  health)\n" +
+		"    [ -f \"" + marker + "\" ]\n" +
+		"    ;;\n" +
+		"  *)\n" +
+		"    exit 0\n" +
+		"    ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	originalProvider, hadProvider := os.LookupEnv("GC_BEADS")
+	if err := os.Setenv("GC_BEADS", "exec:"+script); err != nil {
+		t.Fatalf("set GC_BEADS: %v", err)
+	}
+	t.Cleanup(func() {
+		if hadProvider {
+			_ = os.Setenv("GC_BEADS", originalProvider)
+			return
+		}
+		_ = os.Unsetenv("GC_BEADS")
+	})
+
+	releaseErr := make(chan error, 1)
+	go func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if _, err := os.Stat(marker); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				releaseErr <- fmt.Errorf("provider start marker was not written")
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err := os.Setenv("GC_BEADS", "bd"); err != nil {
+			releaseErr <- err
+			return
+		}
+		releaseErr <- os.WriteFile(release, []byte("ok"), 0o644)
+	}()
+
+	err := ensureBeadsProvider(dir)
+	if releaseErr := <-releaseErr; releaseErr != nil {
+		t.Fatalf("release provider script: %v", releaseErr)
+	}
+	if err == nil {
+		t.Fatal("ensureBeadsProvider = nil, want original start error")
+	}
+	if !strings.Contains(err.Error(), "signal: terminated") {
+		t.Fatalf("ensureBeadsProvider error = %v, want start error", err)
+	}
+
+	data, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatalf("read call log: %v", readErr)
+	}
+	got := strings.Fields(string(data))
+	want := []string{"start"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("provider calls = %v, want %v", got, want)
+	}
+}
+
 // TestShutdownBeadsProvider_file verifies that file provider is a no-op.
 func TestShutdownBeadsProvider_file(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")

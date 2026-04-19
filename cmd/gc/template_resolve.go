@@ -312,7 +312,7 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 						agentCat = c
 					}
 				}
-				if frag := buildAssignedSkillsPromptFragment(cfgAgent, p.skillCatalog, agentCat); frag != "" {
+				if frag := buildAssignedSkillsPromptFragment(cfgAgent, p.sharedSkillCatalogForAgent(cfgAgent), agentCat); frag != "" {
 					prompt = prompt + "\n\n" + frag
 				}
 			}
@@ -363,7 +363,7 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 		if p.workspace != nil {
 			wsProvider = p.workspace.Provider
 		}
-		desired := effectiveSkillsForAgent(p.skillCatalog, cfgAgent, wsProvider, p.stderr)
+		desired := effectiveSkillsForAgent(p.sharedSkillCatalogForAgent(cfgAgent), cfgAgent, wsProvider, p.stderr)
 		if len(desired) > 0 {
 			fpExtra = mergeSkillFingerprintEntries(fpExtra, desired)
 			if canonWorkDir != scopeRoot {

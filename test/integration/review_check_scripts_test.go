@@ -262,6 +262,8 @@ func checkScriptEnv(t *testing.T, cityDir, beadID string) []string {
 	)
 	if port, ok := ensureManagedDoltPortForTest(cityDir); ok {
 		env = append(env, "GC_DOLT_PORT="+port)
+	} else {
+		t.Fatalf("managed Dolt port did not become ready for %s", cityDir)
 	}
 	return env
 }

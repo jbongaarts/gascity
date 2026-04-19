@@ -223,12 +223,18 @@ type City struct {
 	// PackDoctors holds convention-discovered pack doctor checks composed
 	// during city and rig expansion. Runtime-only.
 	PackDoctors []DiscoveredDoctor `toml:"-" json:"-"`
+	// PackSkills holds binding-qualified shared skill catalogs composed
+	// from city-level imported packs. Runtime-only.
+	PackSkills []DiscoveredSkillCatalog `toml:"-" json:"-"`
 	// PackSkillsDir holds the current city pack's shared skills catalog root.
 	// Runtime-only — not persisted to TOML or JSON.
 	PackSkillsDir string `toml:"-" json:"-"`
 	// PackMCPDir holds the current city pack's shared MCP catalog root.
 	// Runtime-only — not persisted to TOML or JSON.
 	PackMCPDir string `toml:"-" json:"-"`
+	// RigPackSkills maps rig name to the binding-qualified shared skill
+	// catalogs composed from that rig's imports. Runtime-only.
+	RigPackSkills map[string][]DiscoveredSkillCatalog `toml:"-" json:"-"`
 }
 
 // NamedSession defines a canonical persistent session backed by an agent

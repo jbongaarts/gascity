@@ -155,18 +155,25 @@ func doUnregister(args []string, stdout, stderr io.Writer) int {
 }
 
 func newCitiesCmd(stdout, stderr io.Writer) *cobra.Command {
+	runList := func(_ *cobra.Command, _ []string) error {
+		if doCities(stdout, stderr) != 0 {
+			return errExit
+		}
+		return nil
+	}
 	cmd := &cobra.Command{
 		Use:   "cities",
 		Short: "List registered cities",
 		Long:  `List all cities registered with the machine-wide supervisor.`,
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			if doCities(stdout, stderr) != 0 {
-				return errExit
-			}
-			return nil
-		},
+		RunE:  runList,
 	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "list",
+		Short: "List registered cities",
+		Args:  cobra.NoArgs,
+		RunE:  runList,
+	})
 	return cmd
 }
 

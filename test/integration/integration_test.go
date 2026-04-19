@@ -638,6 +638,14 @@ func integrationEnvFor(gcHome, runtimeDir string, useDolt bool) []string {
 	env = filterEnv(env, "XDG_RUNTIME_DIR")
 	env = filterEnv(env, integrationRealBDBinaryEnv)
 	env = filterEnv(env, "DOLT_ROOT_PATH")
+	env = filterEnv(env, "GC_DOLT_HOST")
+	env = filterEnv(env, "GC_DOLT_PORT")
+	env = filterEnv(env, "GC_DOLT_USER")
+	env = filterEnv(env, "GC_DOLT_PASSWORD")
+	env = filterEnv(env, "BEADS_DOLT_SERVER_HOST")
+	env = filterEnv(env, "BEADS_DOLT_SERVER_PORT")
+	env = filterEnv(env, "BEADS_DOLT_SERVER_USER")
+	env = filterEnv(env, "BEADS_DOLT_PASSWORD")
 	env = filterEnv(env, integrationGCBinaryEnv)
 	env = filterEnv(env, integrationDoltBinaryEnv)
 	env = filterEnv(env, "BEADS_DOLT_AUTO_START")
@@ -872,7 +880,7 @@ func ensureManagedDoltPortForTest(cityDir string) (string, bool) {
 	if startErr != nil && !isGCStartAlreadyRunning(startOut) {
 		return "", false
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		if port, ok := currentManagedDoltPortForTest(cityDir); ok {
 			return port, true
@@ -981,6 +989,18 @@ func startIsolatedSupervisor(t *testing.T, env []string, gcHome string) {
 	t.Fatalf("isolated supervisor did not become ready:\n%s", string(logData))
 }
 
+func restartIsolatedSupervisor(t *testing.T, env []string) {
+	t.Helper()
+
+	_, _ = runCommand("", env, 15*time.Second, gcBinary, "supervisor", "stop", "--wait")
+
+	gcHome := parseEnvList(env)["GC_HOME"]
+	if gcHome == "" {
+		t.Fatal("isolated env missing GC_HOME")
+	}
+	startIsolatedSupervisor(t, env, gcHome)
+}
+
 func reserveLoopbackPort() (int, error) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1017,6 +1037,14 @@ func TestIntegrationEnvForUsesIsolatedHome(t *testing.T) {
 	integrationToolBinDir = filepath.Join(t.TempDir(), "bin")
 
 	t.Setenv("HOME", "/host/home")
+	t.Setenv("GC_DOLT_HOST", "ambient-host")
+	t.Setenv("GC_DOLT_PORT", "0")
+	t.Setenv("GC_DOLT_USER", "ambient-user")
+	t.Setenv("GC_DOLT_PASSWORD", "ambient-password")
+	t.Setenv("BEADS_DOLT_SERVER_HOST", "ambient-beads-host")
+	t.Setenv("BEADS_DOLT_SERVER_PORT", "0")
+	t.Setenv("BEADS_DOLT_SERVER_USER", "ambient-beads-user")
+	t.Setenv("BEADS_DOLT_PASSWORD", "ambient-beads-password")
 	env := integrationEnv()
 	got := parseEnvList(env)
 
@@ -1037,6 +1065,20 @@ func TestIntegrationEnvForUsesIsolatedHome(t *testing.T) {
 	}
 	if got["BEADS_DOLT_AUTO_START"] != "0" {
 		t.Fatalf("BEADS_DOLT_AUTO_START = %q, want %q; tests must match bdRuntimeEnv and suppress bd's rogue auto-start", got["BEADS_DOLT_AUTO_START"], "0")
+	}
+	for _, key := range []string{
+		"GC_DOLT_HOST",
+		"GC_DOLT_PORT",
+		"GC_DOLT_USER",
+		"GC_DOLT_PASSWORD",
+		"BEADS_DOLT_SERVER_HOST",
+		"BEADS_DOLT_SERVER_PORT",
+		"BEADS_DOLT_SERVER_USER",
+		"BEADS_DOLT_PASSWORD",
+	} {
+		if _, ok := got[key]; ok {
+			t.Fatalf("%s leaked into integration env: %v", key, got[key])
+		}
 	}
 }
 

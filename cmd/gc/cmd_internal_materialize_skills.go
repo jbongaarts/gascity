@@ -76,10 +76,12 @@ func newInternalMaterializeSkillsCmd(stdout, stderr io.Writer) *cobra.Command {
 				return nil
 			}
 
-			cityCat, err := materialize.LoadCityCatalog(cfg.PackSkillsDir)
+			rigName := agentRigScopeName(&agent, cfg.Rigs)
+			cityCat, err := loadSharedSkillCatalog(cfg, rigName)
 			if err != nil {
-				fmt.Fprintf(stderr, "gc internal materialize-skills: %v\n", err) //nolint:errcheck // best-effort stderr
-				return errExit
+				fmt.Fprintf(stderr, "gc internal materialize-skills: shared skill catalog unavailable for %q: %v\n", agent.QualifiedName(), err) //nolint:errcheck // best-effort stderr
+				cityCat.Entries = nil
+				cityCat.Shadowed = nil
 			}
 			agentCat, err := materialize.LoadAgentCatalog(agent.SkillsDir)
 			if err != nil {

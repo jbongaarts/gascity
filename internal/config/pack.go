@@ -95,6 +95,17 @@ func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[stri
 				stampDefaultBinding(cachedPackCommands(cache, topoDir), packName)...,
 			)
 			cfg.PackDoctors = appendDiscoveredDoctors(cfg.PackDoctors, cachedPackDoctors(cache, topoDir)...)
+			skills := cachedPackSkills(cache, topoDir)
+			if packName == "" && len(skills) > 0 {
+				return fmt.Errorf("rig %q pack %q: discovered skills require [pack].name for binding", rig.Name, ref)
+			}
+			if cfg.RigPackSkills == nil {
+				cfg.RigPackSkills = make(map[string][]DiscoveredSkillCatalog)
+			}
+			cfg.RigPackSkills[rig.Name] = appendDiscoveredSkills(
+				cfg.RigPackSkills[rig.Name],
+				stampSkillBinding(skills, packName)...,
+			)
 
 			// Validate rig-scoped requirements.
 			for _, req := range reqs {
@@ -173,6 +184,7 @@ func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[stri
 				}
 				commands := cachedPackCommands(cache, impDir)
 				doctors := cachedPackDoctors(cache, impDir)
+				skills := cachedPackSkills(cache, impDir)
 				if !imp.ImportIsTransitive() {
 					absImpDir, _ := filepath.Abs(impDir)
 					var direct []Agent
@@ -185,8 +197,16 @@ func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[stri
 					agents = direct
 					commands = filterCommandsByPackDir(commands, impDir)
 					doctors = filterDoctorsByPackDir(doctors, impDir)
+					skills = filterSkillsByPackDir(skills, impDir)
 				}
 				rigGlobals = append(rigGlobals, globals...)
+				if cfg.RigPackSkills == nil {
+					cfg.RigPackSkills = make(map[string][]DiscoveredSkillCatalog)
+				}
+				cfg.RigPackSkills[rig.Name] = appendDiscoveredSkills(
+					cfg.RigPackSkills[rig.Name],
+					stampImportedSkillBinding(skills, bindingName, imp.Export)...,
+				)
 
 				// Stamp binding name on agents and named sessions.
 				// At the rig level, ALL agents from an import get the rig's
@@ -438,6 +458,11 @@ func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRe
 		}
 		cfg.PackCommands = appendDiscoveredCommands(cfg.PackCommands, stampDefaultBinding(cachedPackCommands(cache, topoDir), packName)...)
 		cfg.PackDoctors = appendDiscoveredDoctors(cfg.PackDoctors, cachedPackDoctors(cache, topoDir)...)
+		skills := cachedPackSkills(cache, topoDir)
+		if packName == "" && len(skills) > 0 {
+			return nil, nil, nil, fmt.Errorf("city pack %q: discovered skills require [pack].name for shared binding", ref)
+		}
+		cfg.PackSkills = appendDiscoveredSkills(cfg.PackSkills, stampSkillBinding(skills, packName)...)
 
 		// Accumulate pack dirs (deduped).
 		allPackDirs = appendUnique(allPackDirs, topoDirs...)
@@ -499,6 +524,7 @@ func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRe
 			}
 			commands := cachedPackCommands(cache, impDir)
 			doctors := cachedPackDoctors(cache, impDir)
+			skills := cachedPackSkills(cache, impDir)
 
 			// When transitive = false, keep only agents directly defined
 			// by this import (not its own transitive dependencies).
@@ -514,6 +540,7 @@ func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRe
 				agents = direct
 				commands = filterCommandsByPackDir(commands, impDir)
 				doctors = filterDoctorsByPackDir(doctors, impDir)
+				skills = filterSkillsByPackDir(skills, impDir)
 			}
 
 			// Stamp binding name on all agents and named sessions.
@@ -589,6 +616,9 @@ func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRe
 			cfg.Services = append(cfg.Services, services...)
 			cfg.PackCommands = appendDiscoveredCommands(cfg.PackCommands, commands...)
 			cfg.PackDoctors = appendDiscoveredDoctors(cfg.PackDoctors, doctors...)
+			if !slices.Contains(BootstrapManagedImportNames(), bindingName) {
+				cfg.PackSkills = appendDiscoveredSkills(cfg.PackSkills, stampImportedSkillBinding(skills, bindingName, imp.Export)...)
+			}
 			allPackDirs = appendUnique(allPackDirs, topoDirs...)
 
 			// Filter by scope for city expansion.
@@ -892,6 +922,7 @@ type packLoadResult struct {
 	globals       []ResolvedPackGlobal
 	commands      []DiscoveredCommand
 	doctors       []DiscoveredDoctor
+	skills        []DiscoveredSkillCatalog
 }
 
 //nolint:unparam // compatibility wrapper keeps the recursion-set argument at the public helper boundary.
@@ -958,6 +989,7 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 	var includedGlobals []ResolvedPackGlobal
 	var includedCommands []DiscoveredCommand
 	var includedDoctors []DiscoveredDoctor
+	var includedSkills []DiscoveredSkillCatalog
 	includedProviders := make(map[string]ProviderSpec)
 
 	for _, inc := range tc.Pack.Includes {
@@ -981,6 +1013,7 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 		includedGlobals = append(includedGlobals, incGlobals...)
 		includedCommands = append(includedCommands, cachedPackCommands(cache, incTopoDir)...)
 		includedDoctors = append(includedDoctors, cachedPackDoctors(cache, incTopoDir)...)
+		includedSkills = append(includedSkills, cachedPackSkills(cache, incTopoDir)...)
 
 		// Merge providers: included first, no overwrite.
 		for name, spec := range incProviders {
@@ -1020,6 +1053,7 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 		}
 		impCommands := cachedPackCommands(cache, impDir)
 		impDoctors := cachedPackDoctors(cache, impDir)
+		impSkills := cachedPackSkills(cache, impDir)
 
 		// When transitive = false, strip agents that came from the
 		// imported pack's own imports (i.e., transitive deps). We keep
@@ -1036,6 +1070,7 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 			impAgents = direct
 			impCommands = filterCommandsByPackDir(impCommands, impDir)
 			impDoctors = filterDoctorsByPackDir(impDoctors, impDir)
+			impSkills = filterSkillsByPackDir(impSkills, impDir)
 		}
 
 		// Stamp binding name on all agents and named sessions from this import.
@@ -1067,6 +1102,7 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 				impDoctors[i].BindingName = bindingName
 			}
 		}
+		impSkills = stampImportedSkillBinding(impSkills, bindingName, imp.Export)
 
 		// Read the imported pack name for provenance tracking.
 		impData, readErr := fs.ReadFile(impPath)
@@ -1092,6 +1128,11 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 				impDoctors[i].PackName = packName
 			}
 		}
+		for i := range impSkills {
+			if impSkills[i].PackName == "" {
+				impSkills[i].PackName = packName
+			}
+		}
 
 		includedAgents = append(includedAgents, impAgents...)
 		includedNamedSessions = append(includedNamedSessions, impNamedSessions...)
@@ -1101,6 +1142,7 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 		includedGlobals = append(includedGlobals, impGlobals...)
 		includedCommands = append(includedCommands, impCommands...)
 		includedDoctors = append(includedDoctors, impDoctors...)
+		includedSkills = append(includedSkills, impSkills...)
 
 		for name, spec := range impProviders {
 			if _, exists := includedProviders[name]; !exists {
@@ -1131,6 +1173,10 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 	doctors = append(doctors, legacyPackDoctors(tc.Doctor, topoDir, tc.Pack.Name)...)
+	skills, err := DiscoverPackSkills(fs, topoDir, tc.Pack.Name)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, nil, err
+	}
 
 	// V2 convention-based order discovery: top-level orders/ flat files are the
 	// standard layout. Deprecated locations are still discovered so pack loads
@@ -1191,6 +1237,7 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 	includedServices = append(includedServices, services...)
 	includedCommands = append(includedCommands, commands...)
 	includedDoctors = append(includedDoctors, doctors...)
+	includedSkills = append(includedSkills, skills...)
 
 	// Apply pack-level patches to the merged agent list.
 	if !tc.Patches.IsEmpty() {
@@ -1264,6 +1311,7 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 		globals:       allGlobals,
 		commands:      includedCommands,
 		doctors:       includedDoctors,
+		skills:        includedSkills,
 	})
 
 	return includedAgents, includedNamedSessions, mergedProviders, includedServices, topoDirs, allRequires, allGlobals, nil
@@ -1283,6 +1331,7 @@ func clonePackLoadResult(in *packLoadResult) *packLoadResult {
 		globals:       deepCopyResolvedPackGlobals(in.globals),
 		commands:      deepCopyCommands(in.commands),
 		doctors:       deepCopyDoctors(in.doctors),
+		skills:        deepCopySkills(in.skills),
 	}
 }
 
@@ -1445,6 +1494,21 @@ func cachedPackDoctors(cache *packLoadCache, topoDir string) []DiscoveredDoctor 
 	return out
 }
 
+func cachedPackSkills(cache *packLoadCache, topoDir string) []DiscoveredSkillCatalog {
+	if cache == nil {
+		return nil
+	}
+	absDir, err := filepath.Abs(topoDir)
+	if err != nil {
+		absDir = topoDir
+	}
+	result, ok := cache.results[absDir]
+	if !ok {
+		return nil
+	}
+	return deepCopySkills(result.skills)
+}
+
 func filterCommandsByPackDir(commands []DiscoveredCommand, packDir string) []DiscoveredCommand {
 	absPackDir, _ := filepath.Abs(packDir)
 	var out []DiscoveredCommand
@@ -1464,6 +1528,18 @@ func filterDoctorsByPackDir(doctors []DiscoveredDoctor, packDir string) []Discov
 		absDir, _ := filepath.Abs(check.PackDir)
 		if absDir == absPackDir {
 			out = append(out, check)
+		}
+	}
+	return out
+}
+
+func filterSkillsByPackDir(skills []DiscoveredSkillCatalog, packDir string) []DiscoveredSkillCatalog {
+	absPackDir, _ := filepath.Abs(packDir)
+	var out []DiscoveredSkillCatalog
+	for _, skill := range skills {
+		absDir, _ := filepath.Abs(skill.PackDir)
+		if absDir == absPackDir {
+			out = append(out, skill)
 		}
 	}
 	return out
@@ -1513,11 +1589,47 @@ func appendDiscoveredDoctors(dst []DiscoveredDoctor, src ...DiscoveredDoctor) []
 	return dst
 }
 
+func appendDiscoveredSkills(dst []DiscoveredSkillCatalog, src ...DiscoveredSkillCatalog) []DiscoveredSkillCatalog {
+	for _, skill := range src {
+		duplicate := false
+		for _, existing := range dst {
+			if existing.SourceDir == skill.SourceDir && existing.BindingName == skill.BindingName {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			dst = append(dst, skill)
+		}
+	}
+	return dst
+}
+
 func stampDefaultBinding(commands []DiscoveredCommand, defaultBinding string) []DiscoveredCommand {
 	out := deepCopyCommands(commands)
 	for i := range out {
 		if out[i].BindingName == "" {
 			out[i].BindingName = defaultBinding
+		}
+	}
+	return out
+}
+
+func stampSkillBinding(skills []DiscoveredSkillCatalog, bindingName string) []DiscoveredSkillCatalog {
+	out := deepCopySkills(skills)
+	for i := range out {
+		if out[i].BindingName == "" {
+			out[i].BindingName = bindingName
+		}
+	}
+	return out
+}
+
+func stampImportedSkillBinding(skills []DiscoveredSkillCatalog, bindingName string, export bool) []DiscoveredSkillCatalog {
+	out := deepCopySkills(skills)
+	for i := range out {
+		if out[i].BindingName == "" || export {
+			out[i].BindingName = bindingName
 		}
 	}
 	return out
@@ -1536,6 +1648,12 @@ func deepCopyCommands(in []DiscoveredCommand) []DiscoveredCommand {
 
 func deepCopyDoctors(in []DiscoveredDoctor) []DiscoveredDoctor {
 	out := make([]DiscoveredDoctor, len(in))
+	copy(out, in)
+	return out
+}
+
+func deepCopySkills(in []DiscoveredSkillCatalog) []DiscoveredSkillCatalog {
+	out := make([]DiscoveredSkillCatalog, len(in))
 	copy(out, in)
 	return out
 }

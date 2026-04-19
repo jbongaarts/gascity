@@ -44,6 +44,8 @@ func TestHumaBinary_SupervisorBootsAndServesSpec(t *testing.T) {
 	env := append(os.Environ(),
 		"GC_HOME="+gcHome,
 		"XDG_RUNTIME_DIR="+runtimeDir,
+		"GC_BEADS=file",
+		"GC_DOLT=skip",
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -105,18 +107,17 @@ func TestHumaBinary_SupervisorBootsAndServesSpec(t *testing.T) {
 
 	// 3) Create a city the supervisor can see, then exercise per-city commands.
 	cityRoot := filepath.Join(gcHome, "city")
-	runCLI(t, bin, env, "gc init", "init", cityRoot, "--provider", "claude")
-	runCLI(t, bin, env, "gc register", "register", cityRoot, "--name", "humatest")
+	runCLI(t, bin, env, "gc init", "init", "--skip-provider-readiness", cityRoot, "--provider", "claude", "--name", "humatest")
 
 	// Give the supervisor a moment to pick up the registered city.
 	cityListURL := baseURL + "/v0/cities"
 	waitForCityRegistered(t, cityListURL, "humatest", 5*time.Second)
 
 	// 4) `gc city status` — resolves the city, calls per-city status.
-	runCLI(t, bin, env, "gc city status", "--city", "humatest", "status")
+	runCLI(t, bin, env, "gc city status", "--city", cityRoot, "status")
 
-	// 5) `gc agents list` — per-city, exercises a different domain handler.
-	runCLI(t, bin, env, "gc agents list", "--city", "humatest", "agents", "list")
+	// 5) `gc session list` — per-city, exercises a different domain handler.
+	runCLI(t, bin, env, "gc session list", "--city", cityRoot, "session", "list")
 }
 
 // runCLI executes a gc subcommand against the live supervisor and fails
