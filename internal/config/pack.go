@@ -53,6 +53,10 @@ type packConfig struct {
 // (Layer 3). cityRoot is the city directory (parent of city.toml), used
 // for path resolution.
 func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[string][]string) error {
+	return expandPacks(cfg, fs, cityRoot, rigFormulaDirs, LoadOptions{})
+}
+
+func expandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[string][]string, opts LoadOptions) error {
 	var expanded []Agent
 	for i := range cfg.Rigs {
 		rig := &cfg.Rigs[i]
@@ -81,7 +85,7 @@ func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[stri
 				}
 			}
 
-			agents, namedSessions, providers, services, topoDirs, reqs, globals, err := loadPackWithCache(fs, topoPath, topoDir, cityRoot, rig.Name, nil, cache)
+			agents, namedSessions, providers, services, topoDirs, reqs, globals, err := loadPackWithCacheOptions(fs, topoPath, topoDir, cityRoot, rig.Name, nil, cache, opts)
 			if err != nil {
 				return fmt.Errorf("rig %q pack %q: %w", rig.Name, ref, err)
 			}
@@ -174,8 +178,8 @@ func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[stri
 				}
 
 				impPath := filepath.Join(impDir, packFile)
-				agents, namedSessions, providers, services, topoDirs, reqs, globals, err := loadPackWithCache(
-					fs, impPath, impDir, cityRoot, rig.Name, nil, cache)
+				agents, namedSessions, providers, services, topoDirs, reqs, globals, err := loadPackWithCacheOptions(
+					fs, impPath, impDir, cityRoot, rig.Name, nil, cache, opts)
 				if err != nil {
 					return fmt.Errorf("rig %q import %q: %w", rig.Name, bindingName, err)
 				}
@@ -401,6 +405,10 @@ func ExpandPacks(cfg *City, fs fsys.FS, cityRoot string, rigFormulaDirs map[stri
 // (formulaDirs, packRequirements, shadowWarnings, error). cityRoot is
 // the city directory.
 func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRequirement, []string, error) {
+	return expandCityPacks(cfg, fs, cityRoot, LoadOptions{})
+}
+
+func expandCityPacks(cfg *City, fs fsys.FS, cityRoot string, opts LoadOptions) ([]string, []PackRequirement, []string, error) {
 	topos := cfg.Workspace.Includes
 	hasImports := len(cfg.Imports) > 0
 	if len(topos) == 0 && !hasImports {
@@ -439,7 +447,7 @@ func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRe
 			}
 		}
 
-		agents, namedSessions, providers, services, topoDirs, reqs, globals, err := loadPackWithCache(fs, topoPath, topoDir, cityRoot, "", nil, cache)
+		agents, namedSessions, providers, services, topoDirs, reqs, globals, err := loadPackWithCacheOptions(fs, topoPath, topoDir, cityRoot, "", nil, cache, opts)
 		if err != nil {
 			// pack.toml may be missing if the pack was removed upstream after
 			// the repo was fetched. Skip gracefully.
@@ -517,8 +525,8 @@ func ExpandCityPacks(cfg *City, fs fsys.FS, cityRoot string) ([]string, []PackRe
 			}
 
 			impPath := filepath.Join(impDir, packFile)
-			agents, namedSessions, providers, services, topoDirs, reqs, globals, err := loadPackWithCache(
-				fs, impPath, impDir, cityRoot, "", nil, cache)
+			agents, namedSessions, providers, services, topoDirs, reqs, globals, err := loadPackWithCacheOptions(
+				fs, impPath, impDir, cityRoot, "", nil, cache, opts)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("city import %q: %w", bindingName, err)
 			}
@@ -931,6 +939,10 @@ func loadPack(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[
 }
 
 func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[string]bool, cache *packLoadCache) ([]Agent, []NamedSession, map[string]ProviderSpec, []Service, []string, []PackRequirement, []ResolvedPackGlobal, error) {
+	return loadPackWithCacheOptions(fs, topoPath, topoDir, cityRoot, rigName, seen, cache, LoadOptions{})
+}
+
+func loadPackWithCacheOptions(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, seen map[string]bool, cache *packLoadCache, opts LoadOptions) ([]Agent, []NamedSession, map[string]ProviderSpec, []Service, []string, []PackRequirement, []ResolvedPackGlobal, error) {
 	// Initialize seen set on first call.
 	if seen == nil {
 		seen = make(map[string]bool)
@@ -999,8 +1011,8 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 		}
 
 		incTopoPath := filepath.Join(incTopoDir, packFile)
-		incAgents, incNamedSessions, incProviders, incServices, incTopoDirs, incReqs, incGlobals, err := loadPackWithCache(
-			fs, incTopoPath, incTopoDir, cityRoot, rigName, seen, cache)
+		incAgents, incNamedSessions, incProviders, incServices, incTopoDirs, incReqs, incGlobals, err := loadPackWithCacheOptions(
+			fs, incTopoPath, incTopoDir, cityRoot, rigName, seen, cache, opts)
 		if err != nil {
 			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("include %q: %w", inc, err)
 		}
@@ -1046,8 +1058,8 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 		}
 
 		impPath := filepath.Join(impDir, packFile)
-		impAgents, impNamedSessions, impProviders, impServices, impTopoDirs, impReqs, impGlobals, err := loadPackWithCache(
-			fs, impPath, impDir, cityRoot, rigName, seen, cache)
+		impAgents, impNamedSessions, impProviders, impServices, impTopoDirs, impReqs, impGlobals, err := loadPackWithCacheOptions(
+			fs, impPath, impDir, cityRoot, rigName, seen, cache, opts)
 		if err != nil {
 			return nil, nil, nil, nil, nil, nil, nil, fmt.Errorf("import %q: %w", bindingName, err)
 		}
@@ -1181,10 +1193,10 @@ func loadPackWithCache(fs fsys.FS, topoPath, topoDir, cityRoot, rigName string, 
 	// V2 convention-based order discovery: top-level orders/ flat files are the
 	// standard layout. Deprecated locations are still discovered so pack loads
 	// surface migration warnings consistently.
-	if _, err := orders.ScanRoots(fs, []orders.ScanRoot{{
+	if _, err := orders.ScanRootsWithOptions(fs, []orders.ScanRoot{{
 		Dir:          filepath.Join(topoDir, "orders"),
 		FormulaLayer: filepath.Join(topoDir, "formulas"),
-	}}, nil); err != nil {
+	}}, nil, orders.ScanOptions{SuppressDeprecatedPathWarnings: opts.SuppressDeprecatedOrderWarnings}); err != nil {
 		return nil, nil, nil, nil, nil, nil, nil, err
 	}
 

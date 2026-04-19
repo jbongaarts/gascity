@@ -36,6 +36,23 @@ func loadCityConfig(cityPath string) (*config.City, error) {
 	return cfg, nil
 }
 
+// loadCityConfigSuppressDeprecatedOrderWarnings performs a full config load
+// while suppressing only legacy order-path migration warnings.
+func loadCityConfigSuppressDeprecatedOrderWarnings(cityPath string) (*config.City, error) {
+	extras := builtinPackIncludes(cityPath)
+	cfg, _, err := config.LoadWithIncludesOptions(
+		fsys.OSFS{},
+		filepath.Join(cityPath, "city.toml"),
+		config.LoadOptions{SuppressDeprecatedOrderWarnings: true},
+		extras...,
+	)
+	if err != nil {
+		return nil, err
+	}
+	applyFeatureFlags(cfg)
+	return cfg, nil
+}
+
 // loadCityConfigFS is the testable variant of loadCityConfig that accepts a
 // filesystem implementation. Used by functions that take an fsys.FS parameter
 // for unit testing.

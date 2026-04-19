@@ -572,7 +572,7 @@ func rigCityEntries(reg *supervisor.Registry, rigPath string) []supervisor.CityE
 	}
 	var matched []supervisor.CityEntry
 	for _, c := range cities {
-		cfg, err := loadCityConfig(c.Path)
+		cfg, err := loadCityConfigSuppressDeprecatedOrderWarnings(c.Path)
 		if err != nil {
 			continue
 		}

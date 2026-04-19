@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"io"
+	"log"
 	"net"
 	"os"
 	"os/user"
@@ -166,6 +167,70 @@ func TestReloadSupervisorFallsBackToDefaultHomeSocket(t *testing.T) {
 	if !strings.Contains(stdout.String(), "Reconciliation triggered.") {
 		t.Fatalf("stdout = %q, want reload confirmation", stdout.String())
 	}
+}
+
+func TestReconcileRigIndexSuppressesDeprecatedOrderWarnings(t *testing.T) {
+	gcHome := t.TempDir()
+	t.Setenv("GC_HOME", gcHome)
+
+	cityPath := setupCity(t, "quiet-supervisor")
+	rigDir := filepath.Join(t.TempDir(), "quiet-supervisor-rig")
+	if err := os.MkdirAll(rigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	toml := `[workspace]
+name = "quiet-supervisor"
+includes = ["missing-pack"]
+
+[[agent]]
+name = "mayor"
+
+[[rigs]]
+name = "quiet-supervisor-rig"
+path = "` + rigDir + `"
+
+[packs.missing-pack]
+source = "https://example.com/missing.git"
+ref = "main"
+path = "packs/missing"
+`
+	writeRigAnywhereCityToml(t, cityPath, toml)
+	writeRigAnywhereLegacyOrderPack(t, cityPath)
+
+	reg := registryAt(t, gcHome)
+	if err := reg.Register(cityPath, "quiet-supervisor"); err != nil {
+		t.Fatal(err)
+	}
+
+	var logs bytes.Buffer
+	oldWriter := log.Writer()
+	oldFlags := log.Flags()
+	oldPrefix := log.Prefix()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(oldWriter)
+		log.SetFlags(oldFlags)
+		log.SetPrefix(oldPrefix)
+	})
+
+	var stderr bytes.Buffer
+	reconcileRigIndex(reg, &stderr)
+	if stderr.Len() != 0 {
+		t.Fatalf("reconcileRigIndex stderr = %q, want empty", stderr.String())
+	}
+	if strings.Contains(logs.String(), "deprecated order path") {
+		t.Fatalf("reconcileRigIndex emitted order migration warning:\n%s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "not found, skipping") {
+		t.Fatalf("reconcileRigIndex suppressed non-order config diagnostics; logs:\n%s", logs.String())
+	}
+	entry, ok := reg.LookupRigByName("quiet-supervisor-rig")
+	if !ok {
+		t.Fatal("reconcileRigIndex did not register quiet-supervisor-rig")
+	}
+	assertSameTestPath(t, entry.DefaultCity, cityPath)
 }
 
 func TestRenderSupervisorLaunchdTemplate(t *testing.T) {

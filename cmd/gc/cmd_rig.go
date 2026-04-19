@@ -915,7 +915,7 @@ func cmdRigRemove(rigName string, stdout, stderr io.Writer) int {
 			// Update .beads/.env and routes for the rig's new default city.
 			if newDefault != "" {
 				_ = writeBeadsEnvGTRoot(fsys.OSFS{}, removedPath, newDefault)
-				if newCfg, err := loadCityConfig(newDefault); err == nil {
+				if newCfg, err := loadCityConfigSuppressDeprecatedOrderWarnings(newDefault); err == nil {
 					resolveRigPaths(newDefault, newCfg.Rigs)
 					newRigs := collectRigRoutes(newDefault, newCfg)
 					_ = writeAllRoutes(newRigs)

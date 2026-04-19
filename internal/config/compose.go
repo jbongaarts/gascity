@@ -33,12 +33,24 @@ type Provenance struct {
 	Warnings []string
 }
 
+// LoadOptions controls optional config-loading behavior.
+type LoadOptions struct {
+	// SuppressDeprecatedOrderWarnings suppresses only legacy order-path
+	// migration warnings produced while discovering pack orders.
+	SuppressDeprecatedOrderWarnings bool
+}
+
 // LoadWithIncludes loads a city.toml and merges all included fragments.
 // Includes are NOT recursive — fragments cannot include other fragments.
 // Extra includes (from CLI -f flags) are appended after the root's
 // include list and processed identically.
 // Returns the fully-merged config, provenance tracking, and any error.
 func LoadWithIncludes(fs fsys.FS, path string, extraIncludes ...string) (*City, *Provenance, error) {
+	return LoadWithIncludesOptions(fs, path, LoadOptions{}, extraIncludes...)
+}
+
+// LoadWithIncludesOptions loads a city.toml with the supplied load options.
+func LoadWithIncludesOptions(fs fsys.FS, path string, opts LoadOptions, extraIncludes ...string) (*City, *Provenance, error) {
 	data, err := fs.ReadFile(path)
 	if err != nil {
 		return nil, nil, fmt.Errorf("loading config %q: %w", path, err)
@@ -326,7 +338,7 @@ func LoadWithIncludes(fs fsys.FS, path string, extraIncludes ...string) (*City, 
 	}
 
 	// Expand city packs before patches (so patches can target city-topo agents).
-	cityTopoFormulas, cityReqs, shadowWarnings, ctErr := ExpandCityPacks(root, fs, cityRoot)
+	cityTopoFormulas, cityReqs, shadowWarnings, ctErr := expandCityPacks(root, fs, cityRoot, opts)
 	if ctErr != nil {
 		return nil, nil, ctErr
 	}
@@ -356,7 +368,7 @@ func LoadWithIncludes(fs fsys.FS, path string, extraIncludes ...string) (*City, 
 	// Expand rig packs after patches (pack agents get rig overrides).
 	rigFormulaDirs := make(map[string][]string)
 	if HasPackRigs(root.Rigs) {
-		if err := ExpandPacks(root, fs, cityRoot, rigFormulaDirs); err != nil {
+		if err := expandPacks(root, fs, cityRoot, rigFormulaDirs, opts); err != nil {
 			return nil, nil, fmt.Errorf("expanding packs: %w", err)
 		}
 		// Track pack-expanded agents in provenance.
