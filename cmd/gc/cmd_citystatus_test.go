@@ -387,11 +387,27 @@ func TestControllerStatusGuidance(t *testing.T) {
 			},
 		},
 		{
+			name: "supervisor city stopped",
+			ctrl: ControllerJSON{Mode: "supervisor", PID: 4321},
+			want: []string{
+				"Authority: supervisor process PID 4321",
+				"Next: gc start /tmp/city to ask the supervisor to start this city",
+			},
+		},
+		{
 			name: "supervisor starting",
 			ctrl: ControllerJSON{Mode: "supervisor", PID: 4321, Status: "starting_bead_store"},
 			want: []string{
 				"Authority: supervisor process PID 4321",
 				"Next: gc supervisor logs to inspect startup progress",
+			},
+		},
+		{
+			name: "supervisor init failed",
+			ctrl: ControllerJSON{Mode: "supervisor", PID: 4321, Status: "init_failed"},
+			want: []string{
+				"Authority: supervisor process PID 4321",
+				"Next: gc supervisor logs to see the init failure",
 			},
 		},
 		{

@@ -480,6 +480,9 @@ func controllerStatusGuidance(ctrl ControllerJSON, cityPath string) []string {
 		if ctrl.Status == "" {
 			return append(lines, "Next: "+startCommand+" to ask the supervisor to start this city")
 		}
+		if ctrl.Status == "init_failed" {
+			return append(lines, "Next: gc supervisor logs to see the init failure")
+		}
 		return append(lines, "Next: gc supervisor logs to inspect startup progress")
 	}
 	return nil
