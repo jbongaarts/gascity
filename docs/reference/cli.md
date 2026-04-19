@@ -115,7 +115,7 @@ gc agent add --name mayor
 
 ## gc agent resume
 
-Resume a suspended agent by clearing suspended in city.toml.
+Resume a suspended agent by clearing suspended in its durable config.
 
 The reconciler will start the agent on its next tick. Supports bare
 names (resolved via rig context) and qualified names (e.g. "myrig/worker").
@@ -126,7 +126,7 @@ gc agent resume <name>
 
 ## gc agent suspend
 
-Suspend an agent by setting suspended=true in city.toml.
+Suspend an agent by setting suspended=true in its durable config.
 
 Suspended agents are skipped by the reconciler — their sessions are not
 started or restarted. Existing sessions continue running but won't be

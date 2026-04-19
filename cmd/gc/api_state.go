@@ -473,15 +473,15 @@ func (cs *controllerState) DisableOrder(name, rig string) error {
 	})
 }
 
-// SuspendAgent writes suspended=true to city.toml (durable desired state).
-// Uses configedit.Editor for provenance-aware edit (inline vs patch).
+// SuspendAgent writes suspended=true to durable agent config.
+// Uses configedit.Editor for provenance-aware edit (inline vs discovered vs patch).
 func (cs *controllerState) SuspendAgent(name string) error {
 	return cs.mutateAndPoke(func() error {
 		return cs.editor.SuspendAgent(name)
 	})
 }
 
-// ResumeAgent clears suspended in city.toml (durable desired state).
+// ResumeAgent clears suspended in durable agent config.
 func (cs *controllerState) ResumeAgent(name string) error {
 	return cs.mutateAndPoke(func() error {
 		return cs.editor.ResumeAgent(name)
