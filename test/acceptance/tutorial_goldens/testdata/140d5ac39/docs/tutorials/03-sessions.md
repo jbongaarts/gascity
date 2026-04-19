@@ -11,28 +11,29 @@ each other. You'll also learn the difference between "polecats" (agents spun up
 on demand to handle work) and "crew" (persistent agents with named sessions),
 
 To continue with this tutorial, you'll want to start from where the last
-tutorial left off, with a `city.toml` that looks like the following and the
-appropriate agent prompts and rig folders in place to match:
+tutorial left off, with `pack.toml` and `city.toml` that look like the
+following and the appropriate agent prompts and rig folders in place to match:
 
 ```shell
 ~/my-city
-$ cat city.toml
-[workspace]
+$ cat pack.toml
+[pack]
 name = "my-city"
-provider = "claude"
+schema = 2
 
 [[agent]]
 name = "mayor"
-prompt_template = "prompts/mayor.md"
+prompt_template = "agents/mayor/prompt.template.md"
 
 [[named_session]]
 template = "mayor"
 mode = "always"
 
-[[agent]]
-name = "reviewer"
-prompt_template = "prompts/reviewer.md"
-provider = "codex"
+~/my-city
+$ cat city.toml
+[workspace]
+name = "my-city"
+provider = "claude"
 
 [[rigs]]
 name = "my-project"
@@ -41,6 +42,11 @@ path = "/Users/csells/my-project"
 [[rigs]]
 name = "my-api"
 path = "/Users/csells/my-api"
+
+~/my-city
+$ cat agents/reviewer/agent.toml
+dir = "my-project"
+provider = "codex"
 ```
 
 ## Looking in on Polecats
@@ -152,13 +158,13 @@ City is up and idle. No pending work, no agents running besides me. What would
 ```
 
 So the mayor is clearly idle, but has not been shutdown. Why not? If you take a
-look again at your `city.toml` file, you'll see why:
+look again at your `pack.toml` file, you'll see why:
 
 ```toml
 ...
 [[agent]]
 name = "mayor"
-prompt_template = "prompts/mayor.md"
+prompt_template = "agents/mayor/prompt.template.md"
 
 [[named_session]]
 template = "mayor"

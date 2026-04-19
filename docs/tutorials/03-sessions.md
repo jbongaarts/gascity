@@ -21,12 +21,6 @@ $ cat pack.toml
 name = "my-city"
 schema = 2
 
-~/my-city
-$ cat city.toml
-[workspace]
-name = "my-city"
-provider = "claude"
-
 [[agent]]
 name = "mayor"
 prompt_template = "agents/mayor/prompt.template.md"
@@ -34,6 +28,12 @@ prompt_template = "agents/mayor/prompt.template.md"
 [[named_session]]
 template = "mayor"
 mode = "always"
+
+~/my-city
+$ cat city.toml
+[workspace]
+name = "my-city"
+provider = "claude"
 
 [[rigs]]
 name = "my-project"
@@ -163,7 +163,7 @@ City is up and idle. No pending work, no agents running besides me. What would
 ```
 
 So the mayor is clearly idle, but has not been shutdown. Why not? If you take a
-look again at your `city.toml` file, you'll see why:
+look again at your `pack.toml` file, you'll see why:
 
 ```toml
 ...

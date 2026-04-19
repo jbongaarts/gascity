@@ -215,7 +215,7 @@ func resolveAgentChoice(input string, order []string, builtins map[string]config
 	return ""
 }
 
-const initProgressSteps = 6
+const initProgressSteps = 8
 
 func logInitProgress(stdout io.Writer, step int, msg string) {
 	if stdout == nil {
@@ -822,12 +822,12 @@ func doInit(fs fsys.FS, cityPath string, wiz wizardConfig, nameOverride string, 
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	logInitProgress(stdout, 5, "Writing pack.toml")
+	logInitProgress(stdout, 4, "Writing pack.toml")
 	if err := writeInitPackToml(fs, cityPath, packCfg); err != nil {
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	logInitProgress(stdout, 6, "Writing city configuration")
+	logInitProgress(stdout, 5, "Writing city configuration")
 	if err := fs.WriteFile(tomlPath, content, 0o644); err != nil {
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1

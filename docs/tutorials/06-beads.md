@@ -18,10 +18,10 @@ and `reviewer` (along with the corresponding prompts):
 
 ```shell
 ~/my-city
-$ cat city.toml
-[workspace]
+$ cat pack.toml
+[pack]
 name = "my-city"
-provider = "claude"
+schema = 2
 
 [[agent]]
 name = "mayor"
@@ -30,6 +30,12 @@ prompt_template = "agents/mayor/prompt.template.md"
 [[named_session]]
 template = "mayor"
 mode = "always"
+
+~/my-city
+$ cat city.toml
+[workspace]
+name = "my-city"
+provider = "claude"
 
 [[rigs]]
 name = "my-project"

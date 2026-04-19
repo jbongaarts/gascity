@@ -1947,8 +1947,17 @@ func TestDoInit_Regression603_NoLegacySeams(t *testing.T) {
 	if strings.Contains(out, "Writing default prompts") {
 		t.Errorf("stdout contains stale V1 wording %q:\n%s", "Writing default prompts", out)
 	}
-	if !strings.Contains(out, "Scaffolding agent prompts") {
-		t.Errorf("stdout missing V2 wording %q:\n%s", "Scaffolding agent prompts", out)
+	if strings.Contains(out, "Writing default formulas") {
+		t.Errorf("stdout contains stale V1 formula wording %q:\n%s", "Writing default formulas", out)
+	}
+	for _, want := range []string{
+		"[3/8] Scaffolding agent prompts",
+		"[4/8] Writing pack.toml",
+		"[5/8] Writing city configuration",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout missing V2 init progress line %q:\n%s", want, out)
+		}
 	}
 
 	cityData, ok := f.Files[filepath.Join("/bright-lights", "city.toml")]
@@ -1957,6 +1966,13 @@ func TestDoInit_Regression603_NoLegacySeams(t *testing.T) {
 	}
 	if strings.Contains(string(cityData), "[[agent]]") {
 		t.Errorf("city.toml contains legacy [[agent]] block; agents belong in pack.toml:\n%s", cityData)
+	}
+	packData, ok := f.Files[filepath.Join("/bright-lights", "pack.toml")]
+	if !ok {
+		t.Fatal("pack.toml not written")
+	}
+	if !strings.Contains(string(packData), "[[agent]]") {
+		t.Errorf("pack.toml missing agent definitions:\n%s", packData)
 	}
 
 	hookPath := filepath.Join("/bright-lights", citylayout.ClaudeHookFile)

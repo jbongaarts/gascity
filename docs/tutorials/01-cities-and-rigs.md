@@ -77,8 +77,8 @@ Choose your coding agent:
 Agent [1]:
 [1/8] Creating runtime scaffold
 [2/8] Installing hooks (Claude Code)
-[3/8] Writing default prompts
-[4/8] Writing default formulas
+[3/8] Scaffolding agent prompts
+[4/8] Writing pack.toml
 [5/8] Writing city configuration
 Created tutorial config (Level 1) in "my-city".
 [6/8] Checking provider readiness
@@ -122,9 +122,10 @@ At the top level of the city directory:
 - `city.toml` — city-local deployment and runtime settings
 
 This city comes with a built-in `mayor` agent. The mayor's prompt lives at
-`agents/mayor/prompt.template.md`, and `city.toml` defines the always-on mayor
+`agents/mayor/prompt.template.md`, and `pack.toml` defines the always-on mayor
 session that uses it. Assuming you chose the default `tutorial` config
-template and default provider, `city.toml` looks like this:
+template and default provider, `city.toml` keeps the city-local runtime
+settings:
 
 ```shell
 ~/my-city
@@ -132,6 +133,16 @@ $ cat city.toml
 [workspace]
 name = "my-city"
 provider = "claude"
+```
+
+The portable pack definition lives next to it:
+
+```shell
+~/my-city
+$ cat pack.toml
+[pack]
+name = "my-city"
+schema = 2
 
 [[agent]]
 name = "mayor"
@@ -144,15 +155,15 @@ mode = "always"
 
 The `[workspace]` section names your city and sets the default provider.
 
-The `[[agent]]` entry defines the built-in `mayor`, and `[[named_session]]`
-keeps a `mayor` session running so you can talk to it at any time. When you
-add more agents later, Gas City creates `agents/<name>/`, with
+The `[[agent]]` entry in `pack.toml` defines the built-in `mayor`, and
+`[[named_session]]` keeps a `mayor` session running so you can talk to it at
+any time. When you add more agents later, Gas City creates `agents/<name>/`, with
 `prompt.template.md` for the prompt and `agent.toml` for any per-agent
 overrides.
 
 Gas City also gives you an implicit agent for each supported provider — so
 `claude`, `codex`, and `gemini` are available as agent names even though they're
-not listed in `city.toml`. These use the provider's defaults with no custom
+not listed in `pack.toml`. These use the provider's defaults with no custom
 prompt.
 
 To check on the status of your city, use `gc status`:

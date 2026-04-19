@@ -113,11 +113,29 @@ func TestTutorial01Cities(t *testing.T) {
 			for _, want := range []string{
 				`name = "my-city"`,
 				`provider = "claude"`,
-				`name = "mayor"`,
-				`prompt_template = "agents/mayor/prompt.template.md"`,
 			} {
 				if !strings.Contains(out, want) {
 					t.Fatalf("city.toml missing %q:\n%s", want, out)
+				}
+			}
+			if strings.Contains(out, "[[agent]]") {
+				t.Fatalf("city.toml contains legacy [[agent]] block:\n%s", out)
+			}
+		})
+
+		t.Run("cat pack.toml", func(t *testing.T) {
+			out, err := ws.runShell("cat pack.toml", "")
+			if err != nil {
+				t.Fatalf("cat pack.toml: %v\n%s", err, out)
+			}
+			for _, want := range []string{
+				`name = "mayor"`,
+				`prompt_template = "agents/mayor/prompt.template.md"`,
+				`template = "mayor"`,
+				`mode = "always"`,
+			} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("pack.toml missing %q:\n%s", want, out)
 				}
 			}
 		})
