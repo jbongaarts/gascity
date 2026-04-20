@@ -76,7 +76,28 @@ var (
 	workflowServeIdlePollInterval  = 100 * time.Millisecond
 	workflowServeIdlePollAttempts  = 3
 	workflowServeWakeSweepInterval = 1 * time.Second
+	workflowServeMaxIdleSleep      = 30 * time.Second
 )
+
+// followSleepDuration returns the sleep interval the --follow loop should use
+// before its next drain, given how many consecutive idle sweeps have passed.
+// The idle sweep count doubles the base interval on each step, capped at
+// workflowServeMaxIdleSleep. Fixes gastownhall/gascity#1028.
+func followSleepDuration(idleSweeps int) time.Duration {
+	if idleSweeps <= 0 {
+		return workflowServeWakeSweepInterval
+	}
+	const maxShift = 30
+	shift := idleSweeps
+	if shift > maxShift {
+		shift = maxShift
+	}
+	d := workflowServeWakeSweepInterval << uint(shift)
+	if d <= 0 || d > workflowServeMaxIdleSleep {
+		return workflowServeMaxIdleSleep
+	}
+	return d
+}
 
 const workflowServeScanLimit = 20
 
@@ -172,19 +193,23 @@ func runWorkflowServe(agentName string, follow bool, _ io.Writer, stderr io.Writ
 	workQuery := expandAgentCommandTemplate(cityPath, loadedCityName(cfg, cityPath), &agentCfg, cfg.Rigs, "work_query", agentCfg.EffectiveWorkQuery(), stderr)
 	workflowTracef("serve start agent=%s city=%s dir=%s", agentCfg.QualifiedName(), cityPath, workDir)
 	if !follow {
-		return drainWorkflowServeWork(agentCfg, workQuery, workDir, workEnv, stderr)
+		_, err := drainWorkflowServeWork(agentCfg, workQuery, workDir, workEnv, stderr)
+		return err
 	}
 	return runWorkflowServeFollow(agentCfg, workQuery, workDir, workEnv, stderr)
 }
 
-func drainWorkflowServeWork(agentCfg config.Agent, workQuery string, workDir string, workEnv map[string]string, stderr io.Writer) error {
+// drainWorkflowServeWork runs the control-dispatcher drain loop to completion
+// for a single invocation. Returns processedAny=true when it advanced at least
+// one control bead, so the --follow caller can reset its idle backoff.
+func drainWorkflowServeWork(agentCfg config.Agent, workQuery string, workDir string, workEnv map[string]string, stderr io.Writer) (bool, error) {
 	processedAny := false
 	idlePolls := 0
 	for {
 		queue, err := workflowServeList(workflowServeQuery(workQuery), workDir, workEnv)
 		if err != nil {
 			workflowTracef("serve query-error agent=%s err=%v", agentCfg.QualifiedName(), err)
-			return fmt.Errorf("querying control work for %s: %w", agentCfg.QualifiedName(), err)
+			return processedAny, fmt.Errorf("querying control work for %s: %w", agentCfg.QualifiedName(), err)
 		}
 		if len(queue) == 0 {
 			if processedAny && idlePolls < workflowServeIdlePollAttempts {
@@ -194,7 +219,7 @@ func drainWorkflowServeWork(agentCfg config.Agent, workQuery string, workDir str
 				continue
 			}
 			workflowTracef("serve idle-exit agent=%s", agentCfg.QualifiedName())
-			return nil
+			return processedAny, nil
 		}
 		idlePolls = 0
 		processedThisCycle := false
@@ -204,7 +229,7 @@ func drainWorkflowServeWork(agentCfg config.Agent, workQuery string, workDir str
 			kind := strings.TrimSpace(candidate.Metadata["gc.kind"])
 			if !isControlDispatcherKind(kind) {
 				workflowTracef("serve unexpected-kind bead=%s kind=%s", beadID, kind)
-				return fmt.Errorf("bead %s has unexpected non-control kind %q", beadID, kind)
+				return processedAny, fmt.Errorf("bead %s has unexpected non-control kind %q", beadID, kind)
 			}
 			workflowTracef("serve process bead=%s kind=%s", beadID, kind)
 			// controlDispatcherServe currently returns nil both when it
@@ -223,7 +248,7 @@ func drainWorkflowServeWork(agentCfg config.Agent, workQuery string, workDir str
 					continue
 				}
 				workflowTracef("serve process-error bead=%s kind=%s err=%v", beadID, kind, err)
-				return fmt.Errorf("processing control bead %s: %w", beadID, err)
+				return processedAny, fmt.Errorf("processing control bead %s: %w", beadID, err)
 			}
 			workflowTracef("serve processed bead=%s kind=%s", beadID, kind)
 			processedAny = true
@@ -235,7 +260,7 @@ func drainWorkflowServeWork(agentCfg config.Agent, workQuery string, workDir str
 		}
 		if pendingCount > 0 {
 			workflowTracef("serve pending-queue agent=%s count=%d", agentCfg.QualifiedName(), pendingCount)
-			return nil
+			return processedAny, nil
 		}
 	}
 }
@@ -262,12 +287,23 @@ func runWorkflowServeFollow(agentCfg config.Agent, workQuery string, workDir str
 	eventCh := make(chan workflowWatchResult, 1)
 	go pumpWorkflowEvents(done, watcher, eventCh)
 
+	idleSweeps := 0
 	for {
-		if err := drainWorkflowServeWork(agentCfg, workQuery, workDir, workEnv, stderr); err != nil {
+		processed, err := drainWorkflowServeWork(agentCfg, workQuery, workDir, workEnv, stderr)
+		if err != nil {
 			return err
 		}
-		if err := waitForRelevantWorkflowWake(eventCh); err != nil {
+		if processed {
+			idleSweeps = 0
+		}
+		eventWake, err := waitForRelevantWorkflowWake(eventCh, followSleepDuration(idleSweeps))
+		if err != nil {
 			return err
+		}
+		if eventWake {
+			idleSweeps = 0
+		} else if !processed {
+			idleSweeps++
 		}
 	}
 }
@@ -291,24 +327,28 @@ func pumpWorkflowEvents(done <-chan struct{}, watcher events.Watcher, eventCh ch
 	}
 }
 
-func waitForRelevantWorkflowWake(eventCh <-chan workflowWatchResult) error {
-	timer := time.NewTimer(workflowServeWakeSweepInterval)
+// waitForRelevantWorkflowWake blocks until either a relevant city event wakes
+// the --follow loop or sleepDur elapses. Returns eventWake=true on the event
+// path (so the caller can reset any idle-backoff counter), false when the
+// timer fires.
+func waitForRelevantWorkflowWake(eventCh <-chan workflowWatchResult, sleepDur time.Duration) (bool, error) {
+	timer := time.NewTimer(sleepDur)
 	defer timer.Stop()
 
 	for {
 		select {
 		case res := <-eventCh:
 			if res.err != nil {
-				return res.err
+				return false, res.err
 			}
 			if workflowEventRelevant(res.evt) {
 				workflowTracef("serve wake-event type=%s subject=%s", res.evt.Type, res.evt.Subject)
-				return nil
+				return true, nil
 			}
 			workflowTracef("serve ignore-event type=%s subject=%s", res.evt.Type, res.evt.Subject)
 		case <-timer.C:
 			workflowTracef("serve wake-sweep")
-			return nil
+			return false, nil
 		}
 	}
 }

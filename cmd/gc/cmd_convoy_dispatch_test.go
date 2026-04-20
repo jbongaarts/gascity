@@ -2223,3 +2223,111 @@ func TestDeleteWorkflowBeadsReportsRollbackFailure(t *testing.T) {
 		t.Fatalf("child down deps = %#v, want none after failed rollback", down)
 	}
 }
+
+func TestFollowSleepDurationBacksOffThenCaps(t *testing.T) {
+	prevSweep := workflowServeWakeSweepInterval
+	prevMax := workflowServeMaxIdleSleep
+	workflowServeWakeSweepInterval = 1 * time.Second
+	workflowServeMaxIdleSleep = 30 * time.Second
+	t.Cleanup(func() {
+		workflowServeWakeSweepInterval = prevSweep
+		workflowServeMaxIdleSleep = prevMax
+	})
+
+	cases := []struct {
+		idleSweeps int
+		want       time.Duration
+	}{
+		{0, 1 * time.Second},
+		{1, 2 * time.Second},
+		{2, 4 * time.Second},
+		{3, 8 * time.Second},
+		{4, 16 * time.Second},
+		{5, 30 * time.Second},
+		{6, 30 * time.Second},
+		{20, 30 * time.Second},
+	}
+	for _, tc := range cases {
+		if got := followSleepDuration(tc.idleSweeps); got != tc.want {
+			t.Errorf("followSleepDuration(%d) = %v, want %v", tc.idleSweeps, got, tc.want)
+		}
+	}
+}
+
+func TestWaitForRelevantWorkflowWakeReturnsTrueOnRelevantEvent(t *testing.T) {
+	eventCh := make(chan workflowWatchResult, 1)
+	eventCh <- workflowWatchResult{evt: events.Event{Type: events.BeadCreated, Subject: "gc-1"}}
+
+	eventWake, err := waitForRelevantWorkflowWake(eventCh, time.Second)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !eventWake {
+		t.Fatal("eventWake = false, want true when relevant event arrives before timeout")
+	}
+}
+
+func TestWaitForRelevantWorkflowWakeReturnsFalseOnTimer(t *testing.T) {
+	eventCh := make(chan workflowWatchResult) // never receives
+
+	start := time.Now()
+	eventWake, err := waitForRelevantWorkflowWake(eventCh, 5*time.Millisecond)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if eventWake {
+		t.Fatal("eventWake = true, want false when no event arrives and timer expires")
+	}
+	if elapsed < 5*time.Millisecond {
+		t.Fatalf("returned after %v, want >= 5ms (timer must actually fire)", elapsed)
+	}
+}
+
+func TestWaitForRelevantWorkflowWakeFallsThroughIrrelevantEventsToTimer(t *testing.T) {
+	eventCh := make(chan workflowWatchResult, 1)
+	eventCh <- workflowWatchResult{evt: events.Event{Type: events.SessionUpdated}}
+
+	eventWake, err := waitForRelevantWorkflowWake(eventCh, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if eventWake {
+		t.Fatal("eventWake = true, want false (irrelevant event must not wake the loop)")
+	}
+}
+
+func TestWaitForRelevantWorkflowWakeReturnsWatcherErr(t *testing.T) {
+	eventCh := make(chan workflowWatchResult, 1)
+	eventCh <- workflowWatchResult{err: os.ErrDeadlineExceeded}
+
+	eventWake, err := waitForRelevantWorkflowWake(eventCh, time.Second)
+	if err == nil {
+		t.Fatal("wait returned nil err, want watcher err surfaced")
+	}
+	if eventWake {
+		t.Fatal("eventWake = true on error path, want false")
+	}
+}
+
+func TestFollowSleepDurationHandlesPathologicalInputs(t *testing.T) {
+	prevSweep := workflowServeWakeSweepInterval
+	prevMax := workflowServeMaxIdleSleep
+	workflowServeWakeSweepInterval = 1 * time.Second
+	workflowServeMaxIdleSleep = 30 * time.Second
+	t.Cleanup(func() {
+		workflowServeWakeSweepInterval = prevSweep
+		workflowServeMaxIdleSleep = prevMax
+	})
+
+	if got := followSleepDuration(1000); got != 30*time.Second {
+		t.Errorf("followSleepDuration(1000) = %v, want 30s (cap)", got)
+	}
+	if got := followSleepDuration(63); got != 30*time.Second {
+		t.Errorf("followSleepDuration(63) = %v, want 30s (overflow-safe cap)", got)
+	}
+	if got := followSleepDuration(-1); got != 1*time.Second {
+		t.Errorf("followSleepDuration(-1) = %v, want base 1s", got)
+	}
+}
