@@ -283,6 +283,10 @@ func defaultScopeDoltDatabase(cityPath, dir, prefix string) string {
 	return prefix
 }
 
+func isReservedManagedDoltDatabase(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), managedDoltProbeDatabase)
+}
+
 func canonicalScopeDoltDatabase(cityPath, dir, prefix string) string {
 	return readDeferredManagedDoltDatabase(filepath.Join(dir, ".beads", "metadata.json"), defaultScopeDoltDatabase(cityPath, dir, prefix))
 }
@@ -825,26 +829,47 @@ func removeScopeLocalDoltServerArtifacts(dir string) error {
 	return nil
 }
 
+func validateManagedDoltDatabaseName(path, doltDatabase string) (string, error) {
+	doltDatabase = strings.TrimSpace(doltDatabase)
+	if doltDatabase == "" {
+		return "", fmt.Errorf("missing pinned dolt_database for %s", path)
+	}
+	if isReservedManagedDoltDatabase(doltDatabase) {
+		return "", fmt.Errorf("reserved pinned dolt_database %q for %s: used internally by managed Dolt health probes; choose a different dolt_database in metadata.json and rename or move the bead database before retrying", doltDatabase, path)
+	}
+	return doltDatabase, nil
+}
+
 func ensureCanonicalScopeMetadata(fs fsys.FS, scopeRoot, doltDatabase string, preserveExisting bool) error {
 	path := filepath.Join(scopeRoot, ".beads", "metadata.json")
+	preserveReservedExisting := false
 	if preserveExisting {
 		if existing, ok, err := contract.ReadDoltDatabase(fs, path); err != nil {
 			return err
 		} else if ok && strings.TrimSpace(existing) != "" {
 			doltDatabase = strings.TrimSpace(existing)
+			if isReservedManagedDoltDatabase(doltDatabase) {
+				// New init paths reject this reserved name, but existing metadata
+				// may predate the reservation. Preserve it during startup
+				// normalization so operators can migrate the scope deliberately.
+				preserveReservedExisting = true
+			}
 		}
 	}
-	if strings.TrimSpace(doltDatabase) == "" {
-		return fmt.Errorf("missing pinned dolt_database for %s", path)
+	var err error
+	if !preserveReservedExisting {
+		if doltDatabase, err = validateManagedDoltDatabaseName(path, doltDatabase); err != nil {
+			return err
+		}
 	}
 	if err := ensureBeadsDir(fs, filepath.Dir(path)); err != nil {
 		return err
 	}
-	_, err := contract.EnsureCanonicalMetadata(fs, path, contract.MetadataState{
+	_, err = contract.EnsureCanonicalMetadata(fs, path, contract.MetadataState{
 		Database:     "dolt",
 		Backend:      "dolt",
 		DoltMode:     "server",
-		DoltDatabase: strings.TrimSpace(doltDatabase),
+		DoltDatabase: doltDatabase,
 	})
 	return err
 }

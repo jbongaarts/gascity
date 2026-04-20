@@ -115,6 +115,92 @@ func TestProviderLifecycleProcessEnvProjectsResolvedGCBin(t *testing.T) {
 	}
 }
 
+func TestGcBeadsBdReadOnlyFallbackDoesNotDropProbeDatabase(t *testing.T) {
+	cityPath := t.TempDir()
+	if err := MaterializeBuiltinPacks(cityPath); err != nil {
+		t.Fatalf("MaterializeBuiltinPacks: %v", err)
+	}
+	scriptData, err := os.ReadFile(gcBeadsBdScriptPath(cityPath))
+	if err != nil {
+		t.Fatalf("ReadFile(gc-beads-bd): %v", err)
+	}
+	script := string(scriptData)
+	assertNoManagedDoltProbeDrop(t, "gc-beads-bd read-only fallback", script)
+	if !strings.Contains(script, "CREATE TABLE IF NOT EXISTS __gc_probe.__probe") {
+		t.Fatalf("gc-beads-bd read-only fallback missing qualified persistent probe table")
+	}
+	assertManagedDoltProbeWrites(t, "gc-beads-bd read-only fallback", script)
+}
+
+func TestGcBeadsBdInitRejectsManagedProbeDatabaseName(t *testing.T) {
+	for _, dbName := range []string{managedDoltProbeDatabase, strings.ToUpper(managedDoltProbeDatabase), " " + managedDoltProbeDatabase + " "} {
+		t.Run(dbName, func(t *testing.T) {
+			cityPath := t.TempDir()
+			scopePath := filepath.Join(cityPath, "rigs", "frontend")
+			if err := os.MkdirAll(filepath.Join(scopePath, ".beads"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := MaterializeBuiltinPacks(cityPath); err != nil {
+				t.Fatalf("MaterializeBuiltinPacks: %v", err)
+			}
+			cmd := exec.Command(gcBeadsBdScriptPath(cityPath), "init", scopePath, "fe", dbName)
+			cmd.Env = sanitizedBaseEnv(
+				"GC_CITY_PATH="+cityPath,
+				"PATH="+os.Getenv("PATH"),
+			)
+			out, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatalf("gc-beads-bd init unexpectedly accepted %s:\n%s", dbName, out)
+			}
+			if !strings.Contains(string(out), "reserved dolt database name: "+dbName) {
+				t.Fatalf("gc-beads-bd init output = %s, want reserved database error", out)
+			}
+		})
+	}
+}
+
+func TestEnsureCanonicalScopeMetadataRejectsManagedProbeDatabase(t *testing.T) {
+	scopePath := t.TempDir()
+	err := ensureCanonicalScopeMetadataForInit(fsys.OSFS{}, scopePath, managedDoltProbeDatabase)
+	if err == nil {
+		t.Fatalf("ensureCanonicalScopeMetadataForInit unexpectedly accepted %s", managedDoltProbeDatabase)
+	}
+	if !strings.Contains(err.Error(), "reserved pinned dolt_database") || !strings.Contains(err.Error(), "choose a different dolt_database") {
+		t.Fatalf("ensureCanonicalScopeMetadataForInit error = %v, want reserved database remediation", err)
+	}
+}
+
+func TestNormalizeCanonicalBdScopeFilesPreservesExistingManagedProbeDatabase(t *testing.T) {
+	cityPath := t.TempDir()
+	metadataPath := filepath.Join(cityPath, ".beads", "metadata.json")
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := contract.EnsureCanonicalMetadata(fsys.OSFS{}, metadataPath, contract.MetadataState{
+		Database:     "dolt",
+		Backend:      "dolt",
+		DoltMode:     "server",
+		DoltDatabase: strings.ToUpper(managedDoltProbeDatabase),
+	}); err != nil {
+		t.Fatalf("EnsureCanonicalMetadata: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, ".beads", "config.yaml"), []byte("issue_prefix: hq\nissue-prefix: hq\ndolt.auto-start: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{Workspace: config.Workspace{Name: "dogfood-city"}}
+	if err := normalizeCanonicalBdScopeFiles(cityPath, cfg); err != nil {
+		t.Fatalf("normalizeCanonicalBdScopeFiles: %v", err)
+	}
+	got, ok, err := contract.ReadDoltDatabase(fsys.OSFS{}, metadataPath)
+	if err != nil {
+		t.Fatalf("ReadDoltDatabase: %v", err)
+	}
+	if !ok || got != strings.ToUpper(managedDoltProbeDatabase) {
+		t.Fatalf("dolt_database = %q, ok=%v; want existing reserved name preserved", got, ok)
+	}
+}
+
 func TestGcBeadsBdCleanupStaleLocksBoundsLsof(t *testing.T) {
 	cityPath := t.TempDir()
 	if err := MaterializeBuiltinPacks(cityPath); err != nil {

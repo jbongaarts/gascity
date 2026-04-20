@@ -764,7 +764,9 @@ check_read_only() {
         esac
     fi
     local output
-    output=$(dolt --host "$host" --port "$DOLT_PORT" --user "$DOLT_USER" --password "${DOLT_PASSWORD:-}" --no-tls         sql -q "CREATE DATABASE IF NOT EXISTS __gc_probe; USE __gc_probe; CREATE TABLE IF NOT EXISTS __probe (k INT PRIMARY KEY); REPLACE INTO __probe VALUES (1); DROP TABLE __probe; DROP DATABASE __gc_probe;" 2>&1) || true
+    # Keep __gc_probe stable. Dropping Dolt databases leaves
+    # .dolt_dropped_databases backups behind.
+    output=$(dolt --host "$host" --port "$DOLT_PORT" --user "$DOLT_USER" --password "${DOLT_PASSWORD:-}" --no-tls         sql -q "CREATE DATABASE IF NOT EXISTS __gc_probe; CREATE TABLE IF NOT EXISTS __gc_probe.__probe (k INT PRIMARY KEY); REPLACE INTO __gc_probe.__probe VALUES (1);" 2>&1) || true
     case "$output" in
         *"read only"*|*"READ ONLY"*|*"Read-only"*)
             return 0  # Is read-only.
@@ -1189,6 +1191,13 @@ valid_sql_name() {
     return 0
 }
 
+is_reserved_dolt_database_name() {
+    case "$(printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')" in
+        __gc_probe) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # clean_stale_sockets removes stale Unix domain sockets left by a crashed
 # dolt server. Without cleanup, "unix socket set up failed: file already in
 # use" prevents clean restarts (upstream 2e058fa1).
@@ -1589,8 +1598,13 @@ op_init() {
     if ! valid_sql_name "$prefix"; then
         die "invalid beads prefix: $prefix (must be alphanumeric, hyphens, underscores)"
     fi
-    if [ -n "$dolt_database" ] && ! valid_sql_name "$dolt_database"; then
-        die "invalid dolt database name: $dolt_database (must be alphanumeric, hyphens, underscores)"
+    if [ -n "$dolt_database" ]; then
+        if is_reserved_dolt_database_name "$dolt_database"; then
+            die "reserved dolt database name: $dolt_database (used internally by gc)"
+        fi
+        if ! valid_sql_name "$dolt_database"; then
+            die "invalid dolt database name: $dolt_database (must be alphanumeric, hyphens, underscores)"
+        fi
     fi
     # Filter BEADS_DIR from inherited environment to prevent bd from
     # finding a parent directory's .beads/ database (upstream parity).
@@ -1604,11 +1618,20 @@ op_init() {
         # GC's canonical path passes dolt_database explicitly.
         local existing_db
         existing_db=$(read_existing_dolt_database "$dir/.beads/metadata.json")
-        if [ -n "$existing_db" ] && valid_sql_name "$existing_db"; then
+        if [ -n "$existing_db" ]; then
+            if is_reserved_dolt_database_name "$existing_db"; then
+                die "reserved dolt database name: $existing_db (used internally by gc)"
+            fi
+            if ! valid_sql_name "$existing_db"; then
+                die "invalid existing dolt database name: $existing_db"
+            fi
             dolt_database="$existing_db"
         else
             dolt_database="$prefix"
         fi
+    fi
+    if is_reserved_dolt_database_name "$dolt_database"; then
+        die "reserved dolt database name: $dolt_database (used internally by gc)"
     fi
 
     # Custom bead types for bd (extracted from beads core in v0.46.0).
