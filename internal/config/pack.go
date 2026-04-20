@@ -1564,6 +1564,7 @@ func deepCopyAgents(in []Agent) []Agent {
 		out[i].SessionSetup = append([]string(nil), in[i].SessionSetup...)
 		out[i].SessionLive = append([]string(nil), in[i].SessionLive...)
 		out[i].InjectFragments = append([]string(nil), in[i].InjectFragments...)
+		out[i].AppendFragments = append([]string(nil), in[i].AppendFragments...)
 		out[i].DependsOn = append([]string(nil), in[i].DependsOn...)
 		out[i].MaxActiveSessions = copyIntPtr(in[i].MaxActiveSessions)
 		out[i].MinActiveSessions = copyIntPtr(in[i].MinActiveSessions)
@@ -2455,6 +2456,9 @@ func applyAgentOverride(a *Agent, ov *AgentOverride) {
 	}
 	if len(ov.InjectFragments) > 0 {
 		a.InjectFragments = append([]string(nil), ov.InjectFragments...)
+	}
+	if len(ov.AppendFragments) > 0 {
+		a.AppendFragments = append([]string(nil), ov.AppendFragments...)
 	}
 	if len(ov.InjectFragmentsAppend) > 0 {
 		a.InjectFragments = append(a.InjectFragments, ov.InjectFragmentsAppend...)

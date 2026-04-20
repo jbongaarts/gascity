@@ -262,6 +262,13 @@
           "type": "array",
           "description": "InjectFragments lists named template fragments to append to this agent's\nrendered prompt. Fragments come from shared template directories across\nall loaded packs. Each name must match a {{ define \"name\" }} block."
         },
+        "append_fragments": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "AppendFragments is the V2 per-agent alias for prompt fragment injection.\nIt layers after InjectFragments and before inherited/default fragments."
+        },
         "inject_assigned_skills": {
           "type": "boolean",
           "description": "InjectAssignedSkills controls whether gc appends an\n\"assigned skills\" appendix to the agent's rendered prompt. The\nappendix lists every skill visible to this agent, partitioned\ninto (assigned-to-you, shared-with-every-agent), so agents\nsharing a scope-root sink can tell which skills are their\nspecialization vs which are the city-wide set.\n\nPointer tri-state:\n  nil   -\u003e inherit: inject when the agent has a vendor sink\n  *true -\u003e explicitly inject (equivalent to the default)\n  *false -\u003e disable; the template is responsible for rendering\n            any skill guidance itself"
@@ -495,6 +502,13 @@
           },
           "type": "array",
           "description": "InjectFragments overrides the agent's inject_fragments list."
+        },
+        "append_fragments": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "AppendFragments appends named template fragments to this agent's rendered\nprompt. It is the V2 spelling for per-agent fragment selection."
         },
         "pre_start_append": {
           "items": {
@@ -745,6 +759,13 @@
           },
           "type": "array",
           "description": "InjectFragments overrides the agent's inject_fragments list."
+        },
+        "append_fragments": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "AppendFragments overrides the agent's append_fragments list."
         },
         "attach": {
           "type": "boolean",

@@ -102,6 +102,7 @@ Agent defines a configured agent in the city.
 | `overlay_dir` | string |  |  | OverlayDir is a directory whose contents are recursively copied (additive) into the agent's working directory at startup. Existing files are not overwritten. Relative paths resolve against the declaring config file's directory (pack-safe). |
 | `default_sling_formula` | string |  |  | DefaultSlingFormula is the formula name automatically applied via --on when beads are slung to this agent, unless --no-formula is set. Example: "mol-polecat-work" |
 | `inject_fragments` | []string |  |  | InjectFragments lists named template fragments to append to this agent's rendered prompt. Fragments come from shared template directories across all loaded packs. Each name must match a &#123;&#123; define "name" &#125;&#125; block. |
+| `append_fragments` | []string |  |  | AppendFragments is the V2 per-agent alias for prompt fragment injection. It layers after InjectFragments and before inherited/default fragments. |
 | `inject_assigned_skills` | boolean |  |  | InjectAssignedSkills controls whether gc appends an "assigned skills" appendix to the agent's rendered prompt. The appendix lists every skill visible to this agent, partitioned into (assigned-to-you, shared-with-every-agent), so agents sharing a scope-root sink can tell which skills are their specialization vs which are the city-wide set.  Pointer tri-state:   nil   -&gt; inherit: inject when the agent has a vendor sink   *true -&gt; explicitly inject (equivalent to the default)   *false -&gt; disable; the template is responsible for rendering             any skill guidance itself |
 | `attach` | boolean |  |  | Attach controls whether the agent's session supports interactive attachment (e.g., tmux attach). When false, the agent can use a lighter runtime (subprocess instead of tmux). Defaults to true. |
 | `fallback` | boolean |  |  | Fallback marks this agent as a fallback definition. During pack composition, a non-fallback agent with the same name wins silently. When two fallbacks collide, the first loaded (depth-first) wins. |
@@ -157,6 +158,7 @@ AgentOverride modifies a pack-stamped agent for a specific rig.
 | `overlay_dir` | string |  |  | OverlayDir overrides the agent's overlay_dir path. Copies contents additively into the agent's working directory at startup. Relative paths resolve against the city directory. |
 | `default_sling_formula` | string |  |  | DefaultSlingFormula overrides the default sling formula. |
 | `inject_fragments` | []string |  |  | InjectFragments overrides the agent's inject_fragments list. |
+| `append_fragments` | []string |  |  | AppendFragments appends named template fragments to this agent's rendered prompt. It is the V2 spelling for per-agent fragment selection. |
 | `pre_start_append` | []string |  |  | PreStartAppend appends commands to the agent's pre_start list (instead of replacing). Applied after PreStart if both are set. |
 | `session_setup_append` | []string |  |  | SessionSetupAppend appends commands to the agent's session_setup list. |
 | `session_live_append` | []string |  |  | SessionLiveAppend appends commands to the agent's session_live list. |
@@ -208,6 +210,7 @@ AgentPatch modifies an existing agent identified by (Dir, Name).
 | `overlay_dir` | string |  |  | OverlayDir overrides the agent's overlay_dir path. Copies contents additively into the agent's working directory at startup. Relative paths resolve against the city directory. |
 | `default_sling_formula` | string |  |  | DefaultSlingFormula overrides the default sling formula. |
 | `inject_fragments` | []string |  |  | InjectFragments overrides the agent's inject_fragments list. |
+| `append_fragments` | []string |  |  | AppendFragments overrides the agent's append_fragments list. |
 | `attach` | boolean |  |  | Attach overrides the agent's attach setting. |
 | `depends_on` | []string |  |  | DependsOn overrides the agent's dependency list. |
 | `resume_command` | string |  |  | ResumeCommand overrides the agent's resume_command template. |

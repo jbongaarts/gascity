@@ -267,6 +267,10 @@ func deepCopyAgent(src *config.Agent, name, dir string) config.Agent {
 		dst.InjectFragments = make([]string, len(src.InjectFragments))
 		copy(dst.InjectFragments, src.InjectFragments)
 	}
+	if len(src.AppendFragments) > 0 {
+		dst.AppendFragments = make([]string, len(src.AppendFragments))
+		copy(dst.AppendFragments, src.AppendFragments)
+	}
 	if len(src.InheritedAppendFragments) > 0 {
 		dst.InheritedAppendFragments = make([]string, len(src.InheritedAppendFragments))
 		copy(dst.InheritedAppendFragments, src.InheritedAppendFragments)

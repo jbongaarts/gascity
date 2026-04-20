@@ -632,6 +632,7 @@ func TestDeepCopyAgentCoversAllFields(t *testing.T) {
 		DefaultSlingFormula:          strPtr("mol-work"),
 		InheritedDefaultSlingFormula: strPtr("mol-pack"),
 		InjectFragments:              []string{"frag1"},
+		AppendFragments:              []string{"agent-footer"},
 		InheritedAppendFragments:     []string{"pack-footer"},
 		Attach:                       &trueVal,
 		Fallback:                     true,
@@ -705,6 +706,7 @@ func TestDeepCopyAgentCoversAllFields(t *testing.T) {
 	src.Args[0] = "MUTATED"
 	src.ProcessNames[0] = "MUTATED"
 	src.InjectFragments[0] = "MUTATED"
+	src.AppendFragments[0] = "MUTATED"
 	src.InheritedAppendFragments[0] = "MUTATED"
 	src.InstallAgentHooks[0] = "MUTATED"
 	newMin := 999
@@ -727,6 +729,9 @@ func TestDeepCopyAgentCoversAllFields(t *testing.T) {
 	}
 	if dst.InjectFragments[0] == "MUTATED" {
 		t.Error("InjectFragments is not a deep copy")
+	}
+	if dst.AppendFragments[0] == "MUTATED" {
+		t.Error("AppendFragments is not a deep copy")
 	}
 	if dst.InheritedAppendFragments[0] == "MUTATED" {
 		t.Error("InheritedAppendFragments is not a deep copy")

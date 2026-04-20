@@ -531,6 +531,9 @@ type AgentOverride struct {
 	DefaultSlingFormula *string `toml:"default_sling_formula,omitempty"`
 	// InjectFragments overrides the agent's inject_fragments list.
 	InjectFragments []string `toml:"inject_fragments,omitempty"`
+	// AppendFragments appends named template fragments to this agent's rendered
+	// prompt. It is the V2 spelling for per-agent fragment selection.
+	AppendFragments []string `toml:"append_fragments,omitempty"`
 	// PreStartAppend appends commands to the agent's pre_start list
 	// (instead of replacing). Applied after PreStart if both are set.
 	PreStartAppend []string `toml:"pre_start_append,omitempty"`
@@ -1688,6 +1691,9 @@ type Agent struct {
 	// rendered prompt. Fragments come from shared template directories across
 	// all loaded packs. Each name must match a {{ define "name" }} block.
 	InjectFragments []string `toml:"inject_fragments,omitempty"`
+	// AppendFragments is the V2 per-agent alias for prompt fragment injection.
+	// It layers after InjectFragments and before inherited/default fragments.
+	AppendFragments []string `toml:"append_fragments,omitempty"`
 	// InheritedAppendFragments records pack-scoped append_fragments inherited
 	// from an imported pack's [agent_defaults]. Runtime-only.
 	InheritedAppendFragments []string `toml:"-" json:"-"`
