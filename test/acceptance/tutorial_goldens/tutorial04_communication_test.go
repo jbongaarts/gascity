@@ -106,14 +106,19 @@ func TestTutorial04Communication(t *testing.T) {
 		}
 	})
 
-	t.Run(`gc session nudge mayor "Check mail and hook status, then act accordingly"`, func(t *testing.T) {
-		out, err := ws.runShell(`gc session nudge mayor "Check mail and hook status, then act accordingly"`, "")
+	communicationNudge := `Review needed: check mail about auth module changes in my-project and coordinate with reviewer`
+	nudgeMayor := func(context string) {
+		out, err := ws.runShell(`gc session nudge mayor "`+communicationNudge+`"`, "")
 		if err != nil {
-			t.Fatalf("gc session nudge mayor: %v\n%s", err, out)
+			t.Fatalf("%s: %v\n%s", context, err, out)
 		}
 		if !strings.Contains(out, "Nudged mayor") && !strings.Contains(out, "Queued nudge for mayor") {
-			t.Fatalf("nudge output mismatch:\n%s", out)
+			t.Fatalf("%s output mismatch:\n%s", context, out)
 		}
+	}
+
+	t.Run(`gc session nudge mayor "Review needed: check mail about auth module changes in my-project and coordinate with reviewer"`, func(t *testing.T) {
+		nudgeMayor("gc session nudge mayor")
 	})
 
 	t.Run("gc session peek mayor --lines 6", func(t *testing.T) {
@@ -121,7 +126,7 @@ func TestTutorial04Communication(t *testing.T) {
 		mayorCommunicationVisible := func() bool {
 			var err error
 			out, err = ws.runShell("gc session peek mayor --lines 6", "")
-			if err != nil || strings.TrimSpace(out) == "" {
+			if err != nil {
 				return false
 			}
 			return strings.Contains(out, "Review needed") ||
@@ -134,15 +139,11 @@ func TestTutorial04Communication(t *testing.T) {
 			if out, err := ws.runShell("gc session wake mayor", ""); err != nil {
 				t.Fatalf("wake mayor before communication retry: %v\n%s", err, out)
 			}
-			if out, err := ws.runShell(`gc session nudge mayor "Check mail and hook status, then act accordingly"`, ""); err != nil {
-				t.Fatalf("re-nudge mayor before communication retry: %v\n%s", err, out)
-			}
+			nudgeMayor("re-nudge mayor before communication retry")
 		}
 		if !waitForCondition(t, 45*time.Second, 2*time.Second, mayorCommunicationVisible) {
 			restartCity("mayor still did not surface the communication flow after wake")
-			if out, err := ws.runShell(`gc session nudge mayor "Check mail and hook status, then act accordingly"`, ""); err != nil {
-				t.Fatalf("re-nudge mayor after hidden restart: %v\n%s", err, out)
-			}
+			nudgeMayor("re-nudge mayor after hidden restart")
 		}
 		if !waitForCondition(t, 45*time.Second, 2*time.Second, mayorCommunicationVisible) {
 			t.Fatalf("peek mayor did not surface communication flow in time:\n%s", out)
