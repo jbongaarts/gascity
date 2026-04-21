@@ -1005,6 +1005,71 @@ func initFromSkip(relPath string, isDir bool) bool {
 	return false
 }
 
+// initFromSkipForSource returns the source-aware skip policy for gc init --from.
+// PackV2 templates should not carry the deprecated top-level scripts/ shim
+// forward into the new city, but real files and foreign symlink trees remain
+// user-owned and are copied through unchanged.
+func initFromSkipForSource(srcDir string) overlay.SkipFunc {
+	return initFromSkipForSourceFS(fsys.OSFS{}, srcDir)
+}
+
+func initFromSkipForSourceFS(srcFS fsys.FS, srcDir string) overlay.SkipFunc {
+	skipTopLevelScripts := shouldSkipLegacyTopLevelScripts(srcFS, srcDir)
+	return func(relPath string, isDir bool) bool {
+		if skipTopLevelScripts {
+			top, _, _ := strings.Cut(relPath, string(filepath.Separator))
+			if top == "scripts" {
+				return true
+			}
+		}
+		return initFromSkip(relPath, isDir)
+	}
+}
+
+func shouldSkipLegacyTopLevelScripts(srcFS fsys.FS, srcDir string) bool {
+	if sourceTemplatePackSchemaFS(srcFS, srcDir) < initPackSchemaVersion {
+		return false
+	}
+	_, ok, err := legacyShimLinksFS(srcDir, sourceTemplateLegacyScriptOriginsFS(srcFS, srcDir), srcFS, srcDir)
+	return err == nil && ok
+}
+
+func sourceTemplateLegacyScriptOriginsFS(srcFS fsys.FS, srcDir string) []string {
+	seen := make(map[string]struct{})
+	var dirs []string
+	add := func(candidates []string) {
+		for _, dir := range candidates {
+			dir = filepath.Clean(dir)
+			if _, ok := seen[dir]; ok {
+				continue
+			}
+			seen[dir] = struct{}{}
+			dirs = append(dirs, dir)
+		}
+	}
+
+	add(legacyLocalScriptOriginsFS(srcFS, srcDir))
+
+	cfg, _, err := config.LoadWithIncludes(srcFS, filepath.Join(srcDir, "city.toml"))
+	if err == nil {
+		add(legacyScriptSourceDirsFS(srcFS, cfg.PackDirs))
+	}
+
+	return dirs
+}
+
+func sourceTemplatePackSchemaFS(srcFS fsys.FS, srcDir string) int {
+	data, err := srcFS.ReadFile(filepath.Join(srcDir, "pack.toml"))
+	if err != nil {
+		return 0
+	}
+	var pc initPackConfig
+	if _, err := toml.Decode(string(data), &pc); err != nil {
+		return 0
+	}
+	return pc.Pack.Schema
+}
+
 // overrideCityName reads an existing city.toml, updates workspace.name, and writes it back.
 func overrideCityName(f fsys.FS, tomlPath, name string, stderr io.Writer) int {
 	cfg, err := loadCityConfigForEditFS(f, tomlPath)
@@ -1080,7 +1145,7 @@ func doInitFromDirWithOptionsFS(fs fsys.FS, srcDir, cityPath, nameOverride strin
 		fmt.Fprintf(stderr, "gc init: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	if err := overlay.CopyDirWithSkip(srcDir, cityPath, initFromSkip, stderr); err != nil {
+	if err := overlay.CopyDirWithSkip(srcDir, cityPath, initFromSkipForSourceFS(fs, srcDir), stderr); err != nil {
 		fmt.Fprintf(stderr, "gc init --from: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
@@ -1129,8 +1194,8 @@ func doInitFromDirWithOptionsFS(fs fsys.FS, srcDir, cityPath, nameOverride strin
 		}
 	}
 	if loadErr == nil {
-		resolveConfiguredScripts(cityPath, expandedCfg, func(scope string, err error) {
-			fmt.Fprintf(stderr, "gc init: resolving %s scripts: %v\n", scope, err) //nolint:errcheck // best-effort stderr
+		pruneLegacyConfiguredScripts(cityPath, expandedCfg, func(scope string, err error) {
+			fmt.Fprintf(stderr, "gc init: pruning legacy %s scripts: %v\n", scope, err) //nolint:errcheck // best-effort stderr
 		})
 	}
 

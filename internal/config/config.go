@@ -188,9 +188,6 @@ type City struct {
 	// FormulaLayers holds the resolved formula directories per scope.
 	// Populated during pack expansion in LoadWithIncludes. Not from TOML.
 	FormulaLayers FormulaLayers `toml:"-" json:"-"`
-	// ScriptLayers holds the resolved script directories per scope.
-	// Populated during pack expansion in LoadWithIncludes. Not from TOML.
-	ScriptLayers ScriptLayers `toml:"-" json:"-"`
 	// PackDirs is the ordered, deduplicated list of pack directories
 	// from all loaded city packs (includes resolved). Consumers derive
 	// resource-specific search paths by scanning subdirectories:
@@ -239,12 +236,6 @@ type City struct {
 	// RigPackGlobals maps rig name to resolved [global] sections from
 	// rig-level packs. Rig globals apply only to that rig's agents.
 	RigPackGlobals map[string][]ResolvedPackGlobal `toml:"-" json:"-"`
-	// PackScriptDirs is the ordered list of scripts/ directories from
-	// city packs. Populated during pack expansion. Not from TOML.
-	PackScriptDirs []string `toml:"-" json:"-"`
-	// RigScriptDirs maps rig name to its ordered scripts/ directories
-	// from rig packs. Populated during pack expansion. Not from TOML.
-	RigScriptDirs map[string][]string `toml:"-" json:"-"`
 	// PackCommands holds convention-discovered pack commands composed
 	// during city expansion. Runtime-only.
 	PackCommands []DiscoveredCommand `toml:"-" json:"-"`
@@ -404,16 +395,6 @@ func (fl FormulaLayers) SearchPaths(rigName string) []string {
 	return fl.City
 }
 
-// ScriptLayers holds resolved script directories for symlink materialization.
-// Each slice is ordered lowest→highest priority; later entries shadow earlier
-// ones by relative path.
-type ScriptLayers struct {
-	// City holds script dirs for city-scoped materialization.
-	City []string
-	// Rigs maps rig name → script dir layers.
-	Rigs map[string][]string
-}
-
 // Rig defines an external project registered in the city.
 type Rig struct {
 	// Name is the unique identifier for this rig.
@@ -519,7 +500,8 @@ type AgentOverride struct {
 	// SessionSetup overrides the agent's session_setup commands.
 	SessionSetup []string `toml:"session_setup,omitempty"`
 	// SessionSetupScript overrides the agent's session_setup_script path.
-	// Relative paths resolve against the city directory.
+	// Relative paths resolve against the declaring config file's directory
+	// (pack-safe). Paths prefixed with "//" resolve against the city root.
 	SessionSetupScript *string `toml:"session_setup_script,omitempty"`
 	// SessionLive overrides the agent's session_live commands.
 	SessionLive []string `toml:"session_live,omitempty"`
@@ -1643,8 +1625,10 @@ type Agent struct {
 	// Commands run in gc's process (not inside the agent session) via sh -c.
 	SessionSetup []string `toml:"session_setup,omitempty"`
 	// SessionSetupScript is the path to a script run after session_setup commands.
-	// Relative paths resolve against the city directory. The script receives
-	// context via environment variables (GC_SESSION plus existing GC_* vars).
+	// Relative paths resolve against the declaring config file's directory
+	// (pack-safe). Paths prefixed with "//" resolve against the city root.
+	// The script receives context via environment variables (GC_SESSION plus
+	// existing GC_* vars).
 	SessionSetupScript string `toml:"session_setup_script,omitempty"`
 	// SessionLive is a list of shell commands that are safe to re-apply
 	// without restarting the agent. Run at startup (after session_setup)
