@@ -522,6 +522,9 @@ func MaterializeExpansion(f *Formula, targetID string, vars map[string]string) e
 	if err := validateExpandedStepTimeouts(expandedSteps, fmt.Sprintf("materializing expansion %q", f.Formula)); err != nil {
 		return err
 	}
+	if dups := findDuplicateStepIDs(expandedSteps); len(dups) > 0 {
+		return fmt.Errorf("materializing expansion %q: duplicate step IDs after expansion: %v", f.Formula, dups)
+	}
 
 	f.Steps = expandedSteps
 	return nil
@@ -544,6 +547,9 @@ func MaterializeExpansionForTarget(f *Formula, target *Step, vars map[string]str
 	}
 	if err := validateExpandedStepTimeouts(expandedSteps, fmt.Sprintf("materializing expansion %q", f.Formula)); err != nil {
 		return err
+	}
+	if dups := findDuplicateStepIDs(expandedSteps); len(dups) > 0 {
+		return fmt.Errorf("materializing expansion %q: duplicate step IDs after expansion: %v", f.Formula, dups)
 	}
 
 	f.Steps = expandedSteps

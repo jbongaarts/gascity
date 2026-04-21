@@ -967,6 +967,57 @@ bond = "mol-item"
 	}
 }
 
+func TestCompileStandaloneExpansionRejectsDuplicateParentTemplateIDs(t *testing.T) {
+	enableV2ForTest(t)
+
+	dir := t.TempDir()
+	parentA := `
+formula = "standalone-parent-a"
+type = "expansion"
+version = 2
+contract = "graph.v2"
+
+[[template]]
+id = "{target}.attempt"
+title = "Attempt A"
+`
+	if err := os.WriteFile(filepath.Join(dir, "standalone-parent-a.toml"), []byte(parentA), 0o644); err != nil {
+		t.Fatalf("write parentA: %v", err)
+	}
+
+	parentB := `
+formula = "standalone-parent-b"
+type = "expansion"
+version = 2
+contract = "graph.v2"
+
+[[template]]
+id = "{target}.attempt"
+title = "Attempt B"
+`
+	if err := os.WriteFile(filepath.Join(dir, "standalone-parent-b.toml"), []byte(parentB), 0o644); err != nil {
+		t.Fatalf("write parentB: %v", err)
+	}
+
+	child := `
+formula = "standalone-expansion-conflict"
+type = "expansion"
+version = 2
+extends = ["standalone-parent-a", "standalone-parent-b"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "standalone-expansion-conflict.toml"), []byte(child), 0o644); err != nil {
+		t.Fatalf("write child: %v", err)
+	}
+
+	_, err := Compile(context.Background(), "standalone-expansion-conflict", []string{dir}, nil)
+	if err == nil {
+		t.Fatal("Compile succeeded, want duplicate step ID error")
+	}
+	if !strings.Contains(err.Error(), "duplicate step IDs after expansion") {
+		t.Fatalf("Compile error = %v, want duplicate step ID error", err)
+	}
+}
+
 func formatDepsForCleanup(deps []RecipeDep, stepID string) string {
 	var lines []string
 	for _, d := range deps {

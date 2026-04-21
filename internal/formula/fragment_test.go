@@ -207,6 +207,58 @@ needs = ["{target}.review"]
 	}
 }
 
+func TestCompileExpansionFragmentRejectsDuplicateParentTemplateIDs(t *testing.T) {
+	enableV2ForTest(t)
+
+	dir := t.TempDir()
+	parentA := `
+formula = "fragment-parent-a"
+type = "expansion"
+version = 2
+contract = "graph.v2"
+
+[[template]]
+id = "{target}.attempt"
+title = "Attempt A"
+`
+	if err := os.WriteFile(filepath.Join(dir, "fragment-parent-a.toml"), []byte(parentA), 0o644); err != nil {
+		t.Fatalf("write parentA: %v", err)
+	}
+
+	parentB := `
+formula = "fragment-parent-b"
+type = "expansion"
+version = 2
+contract = "graph.v2"
+
+[[template]]
+id = "{target}.attempt"
+title = "Attempt B"
+`
+	if err := os.WriteFile(filepath.Join(dir, "fragment-parent-b.toml"), []byte(parentB), 0o644); err != nil {
+		t.Fatalf("write parentB: %v", err)
+	}
+
+	child := `
+formula = "fragment-expansion-conflict"
+type = "expansion"
+version = 2
+extends = ["fragment-parent-a", "fragment-parent-b"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "fragment-expansion-conflict.toml"), []byte(child), 0o644); err != nil {
+		t.Fatalf("write child: %v", err)
+	}
+
+	target := &Step{ID: "demo.target", Title: "Target"}
+	_, err := CompileExpansionFragment(context.Background(), "fragment-expansion-conflict", []string{dir}, target, nil)
+	if err == nil {
+		t.Fatal("CompileExpansionFragment succeeded, want duplicate step ID error")
+	}
+	if !strings.Contains(err.Error(), "duplicate step IDs after expansion") {
+		t.Fatalf("CompileExpansionFragment error = %v, want duplicate step ID error", err)
+	}
+}
+
 func TestExpandStepDoesNotMutateSharedTemplateState(t *testing.T) {
 	t.Parallel()
 

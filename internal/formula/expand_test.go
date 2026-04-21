@@ -1617,4 +1617,23 @@ func TestMaterializeExpansion(t *testing.T) {
 			t.Fatalf("MaterializeExpansion error = %v, want timeout validation error", err)
 		}
 	})
+
+	t.Run("duplicate template IDs rejected", func(t *testing.T) {
+		f := &Formula{
+			Formula: "exp-duplicate",
+			Type:    TypeExpansion,
+			Template: []*Step{
+				{ID: "{target}.attempt", Title: "Attempt A"},
+				{ID: "{target}.attempt", Title: "Attempt B"},
+			},
+		}
+
+		err := MaterializeExpansion(f, "main", nil)
+		if err == nil {
+			t.Fatal("MaterializeExpansion succeeded, want duplicate step ID error")
+		}
+		if !strings.Contains(err.Error(), "duplicate step IDs after expansion") {
+			t.Fatalf("MaterializeExpansion error = %v, want duplicate step ID error", err)
+		}
+	})
 }
