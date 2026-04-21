@@ -126,7 +126,7 @@ func TestTutorial04Communication(t *testing.T) {
 	})
 
 	communicationNudge := `Check mail and hook status, then act accordingly`
-	communicationFollowUp := `You already read the "Review needed" mail. Continue with the reviewer coordination it requested.`
+	communicationFollowUp := `You already processed the earlier message. Continue the reviewer coordination from that prior request.`
 	communicationPeekTimeout := 90 * time.Second
 	communicationRetryTimeout := 90 * time.Second
 	communicationSettleTimeout := 10 * time.Second
@@ -156,15 +156,16 @@ func TestTutorial04Communication(t *testing.T) {
 		}
 		out, err := ws.runShell("bd show "+tutorialMailID+" --json", "")
 		if err == nil {
-			var bead struct {
+			var beads []struct {
+				ID     string   `json:"id"`
 				Status string   `json:"status"`
 				Labels []string `json:"labels"`
 			}
-			if err := json.Unmarshal([]byte(out), &bead); err == nil {
-				if bead.Status != "" && bead.Status != "open" {
+			if err := json.Unmarshal([]byte(out), &beads); err == nil && len(beads) == 1 && beads[0].ID == tutorialMailID {
+				if beads[0].Status != "" && beads[0].Status != "open" {
 					return true
 				}
-				for _, label := range bead.Labels {
+				for _, label := range beads[0].Labels {
 					if label == "read" {
 						return true
 					}
