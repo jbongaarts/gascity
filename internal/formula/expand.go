@@ -78,6 +78,10 @@ func ApplyExpansionsWithVars(steps []*Step, compose *ComposeRules, parser *Parse
 		if err != nil {
 			return nil, fmt.Errorf("expand %q: %w", rule.Target, err)
 		}
+		expandedSteps, err = materializeExpandedStepConditions(expandedSteps, mergeConditionVars(parentVars, vars))
+		if err != nil {
+			return nil, fmt.Errorf("expand %q: %w", rule.Target, err)
+		}
 		if err := validateExpandedStepTimeouts(expandedSteps, fmt.Sprintf("expand %q", rule.Target)); err != nil {
 			return nil, err
 		}
@@ -125,6 +129,10 @@ func ApplyExpansionsWithVars(steps []*Step, compose *ComposeRules, parser *Parse
 		// Expand each matching step
 		for _, targetStep := range toExpand {
 			expandedSteps, err := expandStep(targetStep, expFormula.Template, 0, vars)
+			if err != nil {
+				return nil, fmt.Errorf("map %q -> %q: %w", rule.Select, targetStep.ID, err)
+			}
+			expandedSteps, err = materializeExpandedStepConditions(expandedSteps, mergeConditionVars(parentVars, vars))
 			if err != nil {
 				return nil, fmt.Errorf("map %q -> %q: %w", rule.Select, targetStep.ID, err)
 			}
@@ -345,6 +353,43 @@ func validateExpandedStepTimeouts(steps []*Step, context string) error {
 		return fmt.Errorf("%s: timeout validation failed:\n  - %s", context, strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+func mergeConditionVars(base map[string]string, overrides map[string]string) map[string]string {
+	if base == nil && overrides == nil {
+		return nil
+	}
+
+	merged := make(map[string]string, len(base)+len(overrides))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range overrides {
+		merged[k] = v
+	}
+	return merged
+}
+
+func materializeExpandedStepConditions(steps []*Step, vars map[string]string) ([]*Step, error) {
+	if vars == nil {
+		return steps, nil
+	}
+
+	filteredSteps, err := FilterStepsByCondition(steps, vars)
+	if err != nil {
+		return nil, fmt.Errorf("filtering conditioned expanded steps: %w", err)
+	}
+	clearStepConditions(filteredSteps)
+	return filteredSteps, nil
+}
+
+func clearStepConditions(steps []*Step) {
+	for _, step := range steps {
+		step.Condition = ""
+		if len(step.Children) > 0 {
+			clearStepConditions(step.Children)
+		}
+	}
 }
 
 // substituteTargetPlaceholders replaces {target} and {target.*} placeholders.
@@ -614,10 +659,14 @@ func applyInlineExpansionsRecursive(steps []*Step, parser *Parser, vars map[stri
 			}
 
 			// Merge formula default vars with step's ExpandVars overrides
-			vars := mergeVars(expFormula, step.ExpandVars)
+			expansionVars := mergeVars(expFormula, step.ExpandVars)
 
 			// Expand the step using the template (reuse existing expandStep)
-			expandedSteps, err := expandStep(step, expFormula.Template, 0, vars)
+			expandedSteps, err := expandStep(step, expFormula.Template, 0, expansionVars)
+			if err != nil {
+				return nil, fmt.Errorf("inline expand on step %q: %w", step.ID, err)
+			}
+			expandedSteps, err = materializeExpandedStepConditions(expandedSteps, mergeConditionVars(vars, expansionVars))
 			if err != nil {
 				return nil, fmt.Errorf("inline expand on step %q: %w", step.ID, err)
 			}

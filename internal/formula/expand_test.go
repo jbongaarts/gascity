@@ -726,7 +726,7 @@ func TestApplyExpansionsWithVars(t *testing.T) {
 		}
 	})
 
-	t.Run("expand preserves condition expressions for later filtering", func(t *testing.T) {
+	t.Run("expand materializes condition expressions with caller vars", func(t *testing.T) {
 		steps := []*Step{{ID: "release", Title: "Release"}}
 		compose := &ComposeRules{
 			Expand: []*ExpandRule{
@@ -737,8 +737,24 @@ func TestApplyExpansionsWithVars(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ApplyExpansionsWithVars failed: %v", err)
 		}
-		if got := result[0].Condition; got != "!{{skip}}" {
-			t.Fatalf("condition = %q, want %q", got, "!{{skip}}")
+		if got := result[0].Condition; got != "" {
+			t.Fatalf("condition = %q, want empty after vars-aware materialization", got)
+		}
+	})
+
+	t.Run("expand materializes condition expressions with expansion defaults", func(t *testing.T) {
+		steps := []*Step{{ID: "release", Title: "Release"}}
+		compose := &ComposeRules{
+			Expand: []*ExpandRule{
+				{Target: "release", With: "conditional-expand"},
+			},
+		}
+		result, err := ApplyExpansions(steps, compose, parser)
+		if err != nil {
+			t.Fatalf("ApplyExpansions failed: %v", err)
+		}
+		if got := result[0].Condition; got != "" {
+			t.Fatalf("condition = %q, want empty after expansion-default materialization", got)
 		}
 	})
 
@@ -753,18 +769,14 @@ func TestApplyExpansionsWithVars(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ApplyExpansionsWithVars failed: %v", err)
 		}
-		if len(result) != 2 {
-			t.Fatalf("len(result) = %d, want 2", len(result))
+		if len(result) != 1 {
+			t.Fatalf("len(result) = %d, want 1", len(result))
 		}
-		filtered, err := FilterStepsByCondition(result, map[string]string{"mode": "fast"})
-		if err != nil {
-			t.Fatalf("FilterStepsByCondition failed: %v", err)
+		if got := result[0].ID; got != "release.attempt" {
+			t.Fatalf("result[0].ID = %q, want release.attempt", got)
 		}
-		if len(filtered) != 1 {
-			t.Fatalf("len(filtered) = %d, want 1", len(filtered))
-		}
-		if got := filtered[0].ID; got != "release.attempt" {
-			t.Fatalf("filtered[0].ID = %q, want release.attempt", got)
+		if got := result[0].Condition; got != "" {
+			t.Fatalf("result[0].Condition = %q, want empty after materialization", got)
 		}
 	})
 
@@ -1377,18 +1389,14 @@ func TestApplyInlineExpansionsWithVarsAllowsConditionallyExclusiveDuplicateTempl
 	if err != nil {
 		t.Fatalf("ApplyInlineExpansionsWithVars failed: %v", err)
 	}
-	if len(result) != 2 {
-		t.Fatalf("len(result) = %d, want 2", len(result))
+	if len(result) != 1 {
+		t.Fatalf("len(result) = %d, want 1", len(result))
 	}
-	filtered, err := FilterStepsByCondition(result, map[string]string{"mode": "fast"})
-	if err != nil {
-		t.Fatalf("FilterStepsByCondition failed: %v", err)
+	if got := result[0].ID; got != "work.attempt" {
+		t.Fatalf("result[0].ID = %q, want work.attempt", got)
 	}
-	if len(filtered) != 1 {
-		t.Fatalf("len(filtered) = %d, want 1", len(filtered))
-	}
-	if got := filtered[0].ID; got != "work.attempt" {
-		t.Fatalf("filtered[0].ID = %q, want work.attempt", got)
+	if got := result[0].Condition; got != "" {
+		t.Fatalf("result[0].Condition = %q, want empty after materialization", got)
 	}
 }
 

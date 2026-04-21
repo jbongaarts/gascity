@@ -1097,6 +1097,53 @@ func TestCompileAllowsConditionallyExclusiveDuplicateComposeExpansionTemplateIDs
 	}
 }
 
+func TestCompileComposeExpansionUsesRuleVarsForConditionalTemplateSelection(t *testing.T) {
+	dir := t.TempDir()
+
+	expansion := `{
+		"formula": "compose-override-conditional",
+		"type": "expansion",
+		"version": 1,
+		"vars": {
+			"mode": {"default": "slow"}
+		},
+		"template": [
+			{"id": "{target}.attempt", "title": "Fast attempt", "condition": "{{mode}} == fast"},
+			{"id": "{target}.attempt", "title": "Slow attempt", "condition": "{{mode}} == slow"}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "compose-override-conditional.formula.json"), []byte(expansion), 0o644); err != nil {
+		t.Fatalf("write expansion: %v", err)
+	}
+
+	formulaText := `{
+		"formula": "compose-override-parent",
+		"version": 1,
+		"steps": [
+			{"id": "release", "title": "Release"}
+		],
+		"compose": {
+			"expand": [
+				{"target": "release", "with": "compose-override-conditional", "vars": {"mode": "fast"}}
+			]
+		}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "compose-override-parent.formula.json"), []byte(formulaText), 0o644); err != nil {
+		t.Fatalf("write formula: %v", err)
+	}
+
+	recipe, err := Compile(context.Background(), "compose-override-parent", []string{dir}, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(recipe.Steps) != 2 {
+		t.Fatalf("len(recipe.Steps) = %d, want 2", len(recipe.Steps))
+	}
+	if got := recipe.Steps[1].ID; got != "compose-override-parent.release.attempt" {
+		t.Fatalf("recipe.Steps[1].ID = %q, want compose-override-parent.release.attempt", got)
+	}
+}
+
 func TestCompileAllowsConditionallyExclusiveDuplicateInlineExpansionTemplateIDs(t *testing.T) {
 	dir := t.TempDir()
 
@@ -1133,6 +1180,48 @@ func TestCompileAllowsConditionallyExclusiveDuplicateInlineExpansionTemplateIDs(
 	}
 	if got := recipe.Steps[1].ID; got != "inline-conditional-parent.work.attempt" {
 		t.Fatalf("recipe.Steps[1].ID = %q, want inline-conditional-parent.work.attempt", got)
+	}
+}
+
+func TestCompileInlineExpansionUsesExpandVarsForConditionalTemplateSelection(t *testing.T) {
+	dir := t.TempDir()
+
+	expansion := `{
+		"formula": "inline-override-conditional",
+		"type": "expansion",
+		"version": 1,
+		"vars": {
+			"mode": {"default": "slow"}
+		},
+		"template": [
+			{"id": "{target}.attempt", "title": "Fast attempt", "condition": "{{mode}} == fast"},
+			{"id": "{target}.attempt", "title": "Slow attempt", "condition": "{{mode}} == slow"}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "inline-override-conditional.formula.json"), []byte(expansion), 0o644); err != nil {
+		t.Fatalf("write expansion: %v", err)
+	}
+
+	formulaText := `{
+		"formula": "inline-override-parent",
+		"version": 1,
+		"steps": [
+			{"id": "work", "title": "Work", "expand": "inline-override-conditional", "expand_vars": {"mode": "fast"}}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "inline-override-parent.formula.json"), []byte(formulaText), 0o644); err != nil {
+		t.Fatalf("write formula: %v", err)
+	}
+
+	recipe, err := Compile(context.Background(), "inline-override-parent", []string{dir}, nil)
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if len(recipe.Steps) != 2 {
+		t.Fatalf("len(recipe.Steps) = %d, want 2", len(recipe.Steps))
+	}
+	if got := recipe.Steps[1].ID; got != "inline-override-parent.work.attempt" {
+		t.Fatalf("recipe.Steps[1].ID = %q, want inline-override-parent.work.attempt", got)
 	}
 }
 
