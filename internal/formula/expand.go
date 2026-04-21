@@ -65,18 +65,9 @@ func ApplyExpansionsWithVars(steps []*Step, compose *ComposeRules, parser *Parse
 			continue // Already expanded
 		}
 
-		// Load the expansion formula
-		expFormula, err := parser.LoadByName(rule.With)
+		expFormula, err := loadResolvedExpansionFormula(parser, rule.With, "expand")
 		if err != nil {
-			return nil, fmt.Errorf("expand: loading %q: %w", rule.With, err)
-		}
-
-		if expFormula.Type != TypeExpansion {
-			return nil, fmt.Errorf("expand: %q is not an expansion formula (type=%s)", rule.With, expFormula.Type)
-		}
-
-		if len(expFormula.Template) == 0 {
-			return nil, fmt.Errorf("expand: %q has no template steps", rule.With)
+			return nil, err
 		}
 
 		// Merge formula default vars with rule overrides
@@ -113,18 +104,9 @@ func ApplyExpansionsWithVars(steps []*Step, compose *ComposeRules, parser *Parse
 
 	// Apply map rules (pattern matching)
 	for _, rule := range compose.Map {
-		// Load the expansion formula
-		expFormula, err := parser.LoadByName(rule.With)
+		expFormula, err := loadResolvedExpansionFormula(parser, rule.With, "map")
 		if err != nil {
-			return nil, fmt.Errorf("map: loading %q: %w", rule.With, err)
-		}
-
-		if expFormula.Type != TypeExpansion {
-			return nil, fmt.Errorf("map: %q is not an expansion formula (type=%s)", rule.With, expFormula.Type)
-		}
-
-		if len(expFormula.Template) == 0 {
-			return nil, fmt.Errorf("map: %q has no template steps", rule.With)
+			return nil, err
 		}
 
 		// Merge formula default vars with rule overrides
@@ -173,6 +155,28 @@ func ApplyExpansionsWithVars(steps []*Step, compose *ComposeRules, parser *Parse
 	}
 
 	return result, nil
+}
+
+func loadResolvedExpansionFormula(parser *Parser, name, context string) (*Formula, error) {
+	expFormula, err := parser.LoadByName(name)
+	if err != nil {
+		return nil, fmt.Errorf("%s: loading %q: %w", context, name, err)
+	}
+
+	resolved, err := parser.Resolve(expFormula)
+	if err != nil {
+		return nil, fmt.Errorf("%s: resolving %q: %w", context, name, err)
+	}
+
+	if resolved.Type != TypeExpansion {
+		return nil, fmt.Errorf("%s: %q is not an expansion formula (type=%s)", context, name, resolved.Type)
+	}
+
+	if len(resolved.Template) == 0 {
+		return nil, fmt.Errorf("%s: %q has no template steps", context, name)
+	}
+
+	return resolved, nil
 }
 
 func resolveOverrideVars(overrides map[string]string, parentVars map[string]string) map[string]string {
@@ -575,19 +579,9 @@ func applyInlineExpansionsRecursive(steps []*Step, parser *Parser, depth int) ([
 	for _, step := range steps {
 		// Check if this step has an inline expansion
 		if step.Expand != "" {
-			// Load the expansion formula
-			expFormula, err := parser.LoadByName(step.Expand)
+			expFormula, err := loadResolvedExpansionFormula(parser, step.Expand, fmt.Sprintf("inline expand on step %q", step.ID))
 			if err != nil {
-				return nil, fmt.Errorf("inline expand on step %q: loading %q: %w", step.ID, step.Expand, err)
-			}
-
-			if expFormula.Type != TypeExpansion {
-				return nil, fmt.Errorf("inline expand on step %q: %q is not an expansion formula (type=%s)",
-					step.ID, step.Expand, expFormula.Type)
-			}
-
-			if len(expFormula.Template) == 0 {
-				return nil, fmt.Errorf("inline expand on step %q: %q has no template steps", step.ID, step.Expand)
+				return nil, err
 			}
 
 			// Merge formula default vars with step's ExpandVars overrides

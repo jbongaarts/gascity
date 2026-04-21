@@ -930,7 +930,7 @@ func stepRequiresGraphContract(step *Step) bool {
 	if step == nil {
 		return false
 	}
-	if step.Ralph != nil || step.Retry != nil || metadataRequiresGraphContract(step.Metadata) {
+	if step.Ralph != nil || step.Retry != nil || step.OnComplete != nil || metadataRequiresGraphContract(step.Metadata) {
 		return true
 	}
 	if step.Loop != nil && stepsRequireGraphContract(step.Loop.Body) {
@@ -972,7 +972,7 @@ func (f *Formula) Validate() error {
 		errs = append(errs, fmt.Sprintf("contract: invalid value %q (must be graph.v2)", f.Contract))
 	}
 	if requiresExplicitGraphContract(f) {
-		errs = append(errs, `contract: formulas that use graph-only retry/scope semantics must declare contract = "graph.v2" explicitly`)
+		errs = append(errs, `contract: formulas that use graph-only constructs must declare contract = "graph.v2" explicitly`)
 	}
 
 	if f.Type != "" && !f.Type.IsValid() {

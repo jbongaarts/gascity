@@ -935,6 +935,38 @@ metadata = { "gc.kind" = "retry" }
 	}
 }
 
+func TestCompileGraphOnCompleteWorkflowRequiresExplicitGraphContract(t *testing.T) {
+	prev := IsFormulaV2Enabled()
+	SetFormulaV2Enabled(true)
+	t.Cleanup(func() { SetFormulaV2Enabled(prev) })
+
+	dir := t.TempDir()
+	formulaText := `
+formula = "implicit-v2-fanout"
+phase = "liquid"
+version = 2
+
+[[steps]]
+id = "survey"
+title = "Survey"
+
+[steps.on_complete]
+for_each = "output.items"
+bond = "mol-item"
+`
+	if err := os.WriteFile(filepath.Join(dir, "implicit-v2-fanout.toml"), []byte(formulaText), 0o644); err != nil {
+		t.Fatalf("write formula: %v", err)
+	}
+
+	_, err := Compile(context.Background(), "implicit-v2-fanout", []string{dir}, nil)
+	if err == nil {
+		t.Fatal("Compile succeeded, want explicit contract error")
+	}
+	if !strings.Contains(err.Error(), `contract = "graph.v2"`) {
+		t.Fatalf("Compile error = %v, want graph.v2 contract guidance", err)
+	}
+}
+
 func formatDepsForCleanup(deps []RecipeDep, stepID string) string {
 	var lines []string
 	for _, d := range deps {

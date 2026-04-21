@@ -196,6 +196,32 @@ func TestValidate_GraphRetryWorkflowRequiresContract(t *testing.T) {
 	}
 }
 
+func TestValidate_GraphOnCompleteWorkflowRequiresContract(t *testing.T) {
+	formula := &Formula{
+		Formula: "mol-implicit-fanout",
+		Version: 2,
+		Type:    TypeWorkflow,
+		Steps: []*Step{
+			{
+				ID:    "survey",
+				Title: "Survey",
+				OnComplete: &OnCompleteSpec{
+					ForEach: "output.items",
+					Bond:    "mol-item",
+				},
+			},
+		},
+	}
+
+	err := formula.Validate()
+	if err == nil {
+		t.Fatal("Validate should reject graph-only on_complete workflow without contract")
+	}
+	if !strings.Contains(err.Error(), `contract = "graph.v2"`) {
+		t.Fatalf("Validate error = %v, want explicit graph.v2 contract guidance", err)
+	}
+}
+
 func TestValidate_Version1DetachedGraphMetadataRequiresContract(t *testing.T) {
 	formula := &Formula{
 		Formula: "mol-detached-v1",
