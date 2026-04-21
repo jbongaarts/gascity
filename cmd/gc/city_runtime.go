@@ -128,8 +128,10 @@ type CityRuntimeParams struct {
 	Stdout, Stderr io.Writer
 }
 
-var cityRuntimeStartBeadsLifecycle = startBeadsLifecycle
-var cityRuntimeReloadLifecycleRetryDelay = time.Second
+var (
+	cityRuntimeStartBeadsLifecycle       = startBeadsLifecycle
+	cityRuntimeReloadLifecycleRetryDelay = time.Second
+)
 
 const cityRuntimeReloadLifecycleRetryLimit = 2
 

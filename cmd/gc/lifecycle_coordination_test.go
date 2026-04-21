@@ -345,13 +345,13 @@ func TestLifecycleCoordination_InitDirIfReady_RetriesTransientManagedDoltFailure
 	initDirIfReadyRetryDelay = 0
 
 	var ensureCalls int
-	initDirIfReadyEnsureBeadsProvider = func(cityPath string) error {
+	initDirIfReadyEnsureBeadsProvider = func(_ string) error {
 		ensureCalls++
 		return nil
 	}
 
 	var initCalls int
-	initDirIfReadyInitAndHookDir = func(cityPath, targetDir, prefix string) error {
+	initDirIfReadyInitAndHookDir = func(_, _, _ string) error {
 		initCalls++
 		if initCalls == 1 {
 			return fmt.Errorf("exec beads init: signal: terminated")
@@ -398,13 +398,13 @@ func TestLifecycleCoordination_InitDirIfReady_DoesNotRetryNonManagedProviderFail
 	initDirIfReadyRetryDelay = 0
 
 	var ensureCalls int
-	initDirIfReadyEnsureBeadsProvider = func(cityPath string) error {
+	initDirIfReadyEnsureBeadsProvider = func(_ string) error {
 		ensureCalls++
 		return nil
 	}
 
 	var initCalls int
-	initDirIfReadyInitAndHookDir = func(cityPath, targetDir, prefix string) error {
+	initDirIfReadyInitAndHookDir = func(_, _, _ string) error {
 		initCalls++
 		return fmt.Errorf("exec beads init: signal: terminated")
 	}
