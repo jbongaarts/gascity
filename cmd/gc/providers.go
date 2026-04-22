@@ -247,7 +247,7 @@ func needsACPProviderWrapper(snapshot *sessionBeadSnapshot, cfg *config.City) bo
 }
 
 func requiresACPProviderWrapper(snapshot *sessionBeadSnapshot, cfg *config.City) bool {
-	return len(observedACPSessionNames(snapshot)) > 0 || (cfg != nil && hasACPAgents(cfg.Agents))
+	return len(observedACPSessionNames(snapshot, cfg)) > 0 || (cfg != nil && hasACPAgents(cfg.Agents))
 }
 
 func hasACPProviderTargets(cfg *config.City) bool {
@@ -292,14 +292,14 @@ func providerSupportsACP(cfg *config.City, providerName string) bool {
 	return resolved.DefaultSessionTransport() == "acp"
 }
 
-func observedACPSessionNames(snapshot *sessionBeadSnapshot) []string {
+func observedACPSessionNames(snapshot *sessionBeadSnapshot, cfg *config.City) []string {
 	if snapshot == nil {
 		return nil
 	}
 	names := make([]string, 0, len(snapshot.open))
 	seen := make(map[string]bool, len(snapshot.open))
 	for _, bead := range snapshot.Open() {
-		if !beadUsesACPTransport(bead) {
+		if !beadUsesACPTransport(bead, cfg) {
 			continue
 		}
 		sessionName := strings.TrimSpace(bead.Metadata["session_name"])
@@ -312,16 +312,35 @@ func observedACPSessionNames(snapshot *sessionBeadSnapshot) []string {
 	return names
 }
 
-func beadUsesACPTransport(bead beads.Bead) bool {
+func beadUsesACPTransport(bead beads.Bead, cfg *config.City) bool {
 	transport := strings.TrimSpace(bead.Metadata["transport"])
 	if transport != "" {
 		return transport == "acp"
 	}
-	return strings.TrimSpace(bead.Metadata["provider"]) == "acp"
+	providerName := strings.TrimSpace(bead.Metadata["provider"])
+	if providerName == "acp" {
+		return true
+	}
+	templateName := strings.TrimSpace(bead.Metadata["template"])
+	if cfg != nil {
+		if agentCfg, ok := resolveAgentIdentity(cfg, templateName, currentRigContext(cfg)); ok {
+			if strings.TrimSpace(agentCfg.Session) == "acp" {
+				return true
+			}
+			if providerName == "" {
+				providerName = strings.TrimSpace(agentCfg.Provider)
+			}
+		}
+		if providerName == "" {
+			providerName = templateName
+		}
+		return providerSupportsACP(cfg, providerName)
+	}
+	return false
 }
 
 func configuredACPRouteNames(snapshot *sessionBeadSnapshot, cityName string, cfg *config.City) []string {
-	names := observedACPSessionNames(snapshot)
+	names := observedACPSessionNames(snapshot, cfg)
 	seen := make(map[string]bool, len(names))
 	for _, name := range names {
 		seen[name] = true

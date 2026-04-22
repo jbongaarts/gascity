@@ -330,6 +330,35 @@ func TestConfiguredACPRouteNames_IncludeObservedACPProviderSessions(t *testing.T
 	}
 }
 
+func TestConfiguredACPRouteNames_IncludeLegacyObservedACPProviderSessionsWithoutTransportMetadata(t *testing.T) {
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Providers: map[string]config.ProviderSpec{
+			"opencode": {
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: boolPtr(true),
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+	snapshot := newSessionBeadSnapshot([]beads.Bead{{
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"template":     "opencode",
+			"provider":     "opencode",
+			"session_name": "provider-session",
+		},
+	}})
+
+	got := configuredACPRouteNames(snapshot, "test-city", cfg)
+	if len(got) != 1 || got[0] != "provider-session" {
+		t.Fatalf("configuredACPRouteNames() = %v, want [provider-session]", got)
+	}
+}
+
 func TestNewSessionProvider_PreregistersACPBeadAndLegacyNames(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
 	t.Setenv("GC_SESSION", "fake")
@@ -496,6 +525,36 @@ func TestNewSessionProviderRoutesObservedACPProviderSessionsWithoutACPAgents(t *
 			"template":     "opencode",
 			"provider":     "opencode",
 			"transport":    "acp",
+			"session_name": "provider-session",
+		},
+	}); err != nil {
+		t.Fatalf("Create(provider session bead): %v", err)
+	}
+
+	sp := newSessionProvider()
+	if err := sp.Attach("provider-session"); err == nil || !strings.Contains(err.Error(), "ACP transport") {
+		t.Fatalf("Attach(provider-session) error = %v, want ACP transport error", err)
+	}
+}
+
+func TestNewSessionProviderRoutesLegacyObservedACPProviderSessionsWithoutTransportMetadata(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_SESSION", "fake")
+
+	cityDir := t.TempDir()
+	t.Setenv("GC_CITY", cityDir)
+	writeACPProviderRouteCityTOML(t, cityDir, "test-city")
+
+	store, err := openCityStoreAt(cityDir)
+	if err != nil {
+		t.Fatalf("openCityStoreAt: %v", err)
+	}
+	if _, err := store.Create(beads.Bead{
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"template":     "opencode",
+			"provider":     "opencode",
 			"session_name": "provider-session",
 		},
 	}); err != nil {
