@@ -2086,6 +2086,73 @@ func TestInitBeadsForDir_execPassesCanonicalDoltDatabase(t *testing.T) {
 	}
 }
 
+// TestInitBeadsForDirExecSetsBEADSDIR exercises all three exec paths in
+// initBeadsForDir and asserts BEADS_DIR=<dir>/.beads is present in the
+// subprocess env. bd init creates a .git/ as a side effect unless BEADS_DIR
+// is set (see upstream gastownhall/beads cmd/bd/init.go), so the init call
+// sites must guarantee it regardless of provider. Regression for #399.
+func TestInitBeadsForDirExecSetsBEADSDIR(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		scriptBase string
+		// cityToml uses dolt/rig config appropriate for the exec branch.
+		cityToml func(rigRel string) string
+	}{
+		{
+			name:       "gc-beads-bd canonical",
+			scriptBase: "gc-beads-bd",
+			cityToml: func(rigRel string) string {
+				return "[workspace]\nname = \"demo\"\n\n[[rigs]]\nname = \"r\"\npath = \"" + rigRel + "\"\nprefix = \"rg\"\n"
+			},
+		},
+		{
+			name:       "generic legacy exec",
+			scriptBase: "record-env",
+			cityToml: func(rigRel string) string {
+				return "[workspace]\nname = \"demo\"\n\n[[rigs]]\nname = \"r\"\npath = \"" + rigRel + "\"\nprefix = \"rg\"\n"
+			},
+		},
+		{
+			name:       "gc-beads-k8s scoped",
+			scriptBase: "gc-beads-k8s",
+			cityToml: func(rigRel string) string {
+				return "[workspace]\nname = \"demo\"\n\n[dolt]\nhost = \"city-db.example.com\"\nport = 3307\n\n[[rigs]]\nname = \"r\"\npath = \"" + rigRel + "\"\nprefix = \"rg\"\ndolt_host = \"rig-db.example.com\"\ndolt_port = \"4407\"\n"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cityDir := t.TempDir()
+			rigDir := filepath.Join(cityDir, "r")
+			if err := os.MkdirAll(rigDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(cityDir, "city.toml"), []byte(tc.cityToml("r")), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			logFile := filepath.Join(t.TempDir(), "env.log")
+			script := filepath.Join(t.TempDir(), tc.scriptBase)
+			content := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = init ]; then printf '%%s\\n' \"${BEADS_DIR:-<unset>}\" > %q; fi\nexit 0\n", logFile)
+			if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("GC_BEADS", "exec:"+script)
+			if err := initBeadsForDir(cityDir, rigDir, "rg", "rg-db"); err != nil {
+				t.Fatalf("initBeadsForDir: %v", err)
+			}
+
+			data, err := os.ReadFile(logFile)
+			if err != nil {
+				t.Fatalf("read env log: %v", err)
+			}
+			want := filepath.Join(rigDir, ".beads")
+			if got := strings.TrimSpace(string(data)); got != want {
+				t.Fatalf("BEADS_DIR = %q, want %q (bd init without BEADS_DIR creates .git as a side effect)", got, want)
+			}
+		})
+	}
+}
+
 func TestRunProviderOpStripsAmbientGCDoltSkip(t *testing.T) {
 	cityDir := t.TempDir()
 	writeMinimalCityToml(t, cityDir)

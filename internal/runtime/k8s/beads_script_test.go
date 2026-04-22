@@ -57,6 +57,29 @@ func TestBeadsScriptInitUsesScopeRootAndCanonicalDoltTarget(t *testing.T) {
 	assertCallNotContains(t, result.callLog, "3308")
 }
 
+// TestBeadsScriptInitSetsBEADSDIR verifies the contrib gc-beads-k8s script
+// exports BEADS_DIR inside the pod before running bd init. Without it, bd
+// init creates a .git/ as a side effect in the workspace. Regression for
+// #399.
+func TestBeadsScriptInitSetsBEADSDIR(t *testing.T) {
+	result := runBeadsScript(t, beadsScriptOptions{
+		Op:   "init",
+		Args: []string{"/city/frontend", "fe"},
+		Env: map[string]string{
+			"GC_CITY_PATH":    "/city",
+			"GC_STORE_ROOT":   "/city/frontend",
+			"GC_BEADS_PREFIX": "fe",
+			"GC_DOLT_HOST":    "canonical-dolt.example.com",
+			"GC_DOLT_PORT":    "4406",
+		},
+	})
+	if result.err != nil {
+		t.Fatalf("gc-beads-k8s init error = %v\noutput:\n%s", result.err, result.output)
+	}
+	assertCallContains(t, result.callLog, `export BEADS_DIR="$workdir/.beads"`)
+	assertCallContains(t, result.callLog, "init --server")
+}
+
 func TestBeadsScriptInitRejectsPartialCanonicalDoltTarget(t *testing.T) {
 	clearDoltAndCityEnv(t)
 	result := runBeadsScript(t, beadsScriptOptions{
