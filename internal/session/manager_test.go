@@ -2340,7 +2340,7 @@ func TestGetDoesNotInferConfiguredTransportForStoppedLegacySession(t *testing.T)
 	}
 }
 
-func TestGetInfersConfiguredTransportForStoppedLegacySessionWithPolicyFallback(t *testing.T) {
+func TestGetDoesNotInferConfiguredTransportForStoppedLegacySessionWithPolicyFallback(t *testing.T) {
 	store := beads.NewMemStore()
 	defaultSP := runtime.NewFake()
 	acpSP := runtime.NewFake()
@@ -2380,8 +2380,8 @@ func TestGetInfersConfiguredTransportForStoppedLegacySessionWithPolicyFallback(t
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got := info.Transport; got != "acp" {
-		t.Fatalf("Transport = %q, want acp for stopped legacy session with policy fallback", got)
+	if got := info.Transport; got != "" {
+		t.Fatalf("Transport = %q, want empty for stopped legacy session without stored evidence", got)
 	}
 
 	updated, err := store.Get(legacy.ID)

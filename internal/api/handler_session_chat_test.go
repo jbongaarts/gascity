@@ -394,7 +394,7 @@ func TestBuildSessionResumeUsesStoredACPTransportForTemplateSession(t *testing.T
 	}
 }
 
-func TestBuildSessionResumeUsesConfiguredACPTransportForTemplateSessionWithoutStoredMetadata(t *testing.T) {
+func TestBuildSessionResumeDoesNotInferConfiguredACPTransportForTemplateSessionWithoutStoredMetadata(t *testing.T) {
 	supportsACP := true
 	fs := newSessionFakeState(t)
 	fs.cfg = &config.City{
@@ -427,7 +427,7 @@ func TestBuildSessionResumeUsesConfiguredACPTransportForTemplateSessionWithoutSt
 	if err != nil {
 		t.Fatalf("buildSessionResume: %v", err)
 	}
-	if got, want := cmd, "/bin/echo acp"; got != want {
+	if got, want := cmd, "/bin/echo"; got != want {
 		t.Fatalf("resume command = %q, want %q", got, want)
 	}
 }

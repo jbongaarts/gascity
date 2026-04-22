@@ -193,10 +193,6 @@ func (m *Manager) transportForBead(b beads.Bead, sessName string) (string, bool)
 	if m.sp != nil && m.sp.IsRunning(sessName) {
 		return "", false
 	}
-	transport, allowStoppedFallback := m.resolveConfiguredTransport(b.Metadata["template"], b.Metadata["provider"])
-	if transport != "" && allowStoppedFallback {
-		return transport, true
-	}
 	return "", false
 }
 

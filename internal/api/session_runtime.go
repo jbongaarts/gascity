@@ -383,7 +383,7 @@ func resolvedSessionTransport(info session.Info, resolved *config.ResolvedProvid
 	if storedSessionProvesACPTransport(resolved, info.Command, metadata) {
 		return "acp"
 	}
-	if allowConfiguredTransportFallback || strings.TrimSpace(info.Command) == "" {
+	if allowConfiguredTransportFallback {
 		return strings.TrimSpace(configuredTransport)
 	}
 	return ""
@@ -402,7 +402,7 @@ func (s *Server) resolveSessionRuntimeWithMetadata(info session.Info, metadata m
 						workDir = info.WorkDir
 					}
 					transport := config.ResolveSessionCreateTransport(agentCfg.Session, resolved)
-					return resolved, workDir, resolvedSessionTransport(info, resolved, transport, metadata, strings.TrimSpace(agentCfg.Session) != "")
+					return resolved, workDir, resolvedSessionTransport(info, resolved, transport, metadata, false)
 				}
 			}
 		}

@@ -589,7 +589,7 @@ func resolvedWorkerRuntimeTransport(info session.Info, resolved *config.Resolved
 	if storedWorkerSessionProvesACPTransport(resolved, info.Command, metadata) {
 		return "acp"
 	}
-	if allowConfiguredTransportFallback || strings.TrimSpace(info.Command) == "" {
+	if allowConfiguredTransportFallback {
 		return strings.TrimSpace(configuredTransport)
 	}
 	return ""
@@ -611,7 +611,7 @@ func resolveWorkerRuntimeProviderWithConfig(cfg *config.City, info session.Info,
 	if sessionKind != "provider" {
 		if found, ok := resolveAgentIdentity(cfg, info.Template, ""); ok {
 			if resolved, err := config.ResolveProvider(&found, &cfg.Workspace, cfg.Providers, exec.LookPath); err == nil {
-				return resolved, config.ResolveSessionCreateTransport(found.Session, resolved), strings.TrimSpace(found.Session) != ""
+				return resolved, config.ResolveSessionCreateTransport(found.Session, resolved), false
 			}
 		}
 	}

@@ -40,9 +40,9 @@ func configuredSessionTransportResolution(cfg *config.City, template, provider s
 			func(name string) (string, error) { return name, nil },
 		)
 		if err != nil {
-			return strings.TrimSpace(agentCfg.Session), strings.TrimSpace(agentCfg.Session) != ""
+			return strings.TrimSpace(agentCfg.Session), false
 		}
-		return config.ResolveSessionCreateTransport(agentCfg.Session, resolved), strings.TrimSpace(agentCfg.Session) != ""
+		return config.ResolveSessionCreateTransport(agentCfg.Session, resolved), false
 	}
 	provider = strings.TrimSpace(provider)
 	if provider == "" {
