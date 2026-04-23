@@ -698,15 +698,20 @@ func TestConfigDrift_DetachAllowsDriftToResume(t *testing.T) {
 		t.Fatalf("Get after detach: %v", err)
 	}
 
-	// Cycle 2: Detached + stale activity → drift proceeds.
+	// Cycle 2: Detached + stale activity means drift proceeds. Current
+	// reconciler behavior restarts the named session in place and wakes it
+	// in the same tick.
 	env.reconcile([]beads.Bead{got})
 
 	got, err = env.store.Get(session.ID)
 	if err != nil {
 		t.Fatalf("Get after drift: %v", err)
 	}
-	if got.Metadata["state"] != "creating" {
-		t.Fatalf("state = %q after detach; want creating (drift applied)", got.Metadata["state"])
+	if got.Metadata["state"] != "active" {
+		t.Fatalf("state = %q after detach; want active after drift restart", got.Metadata["state"])
+	}
+	if got.Metadata["started_config_hash"] == runtime.CoreFingerprint(oldRuntime) {
+		t.Fatalf("started_config_hash still points at old runtime after drift restart")
 	}
 }
 
