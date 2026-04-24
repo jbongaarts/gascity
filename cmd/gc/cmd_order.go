@@ -476,8 +476,12 @@ func doOrderRun(aa []orders.Order, name, rig, cityPath string, store beads.Store
 	if a.FormulaLayer != "" {
 		searchPaths = []string{a.FormulaLayer}
 	}
-	recipe, err := formula.Compile(context.Background(), a.Formula, searchPaths, nil)
+	recipe, err := formula.CompileWithoutRuntimeVarValidation(context.Background(), a.Formula, searchPaths, nil)
 	if err != nil {
+		fmt.Fprintf(stderr, "gc order run: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+	if err := molecule.ValidateRecipeRuntimeVars(recipe, molecule.Options{}); err != nil {
 		fmt.Fprintf(stderr, "gc order run: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}

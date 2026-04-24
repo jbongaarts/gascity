@@ -353,6 +353,84 @@ func TestOrderDispatchFormulaCookFailureLabelsTrackingBead(t *testing.T) {
 	}
 }
 
+func TestOrderDispatchReportsAllMissingRequiredVarsAtOnce(t *testing.T) {
+	store := beads.NewMemStore()
+	var rec memRecorder
+
+	formulaDir := t.TempDir()
+	writeFile(t, filepath.Join(formulaDir, "order-required-vars.formula.toml"), `
+formula = "order-required-vars"
+version = 1
+
+[vars.target_id]
+description = "Bead being worked on"
+required = true
+
+[vars.workspace]
+description = "Workspace path"
+required = true
+
+[[steps]]
+id = "do-work"
+title = "Do work for {{target_id}}"
+description = "Target: {{target_id}}, workspace: {{workspace}}"
+`)
+
+	aa := []orders.Order{{
+		Name:         "fail-formula-vars",
+		Trigger:      "cooldown",
+		Interval:     "2m",
+		Formula:      "order-required-vars",
+		FormulaLayer: formulaDir,
+	}}
+	ad := buildOrderDispatcherFromList(aa, store, nil)
+	if ad == nil {
+		t.Fatal("expected non-nil dispatcher")
+	}
+
+	mad := ad.(*memoryOrderDispatcher)
+	mad.rec = &rec
+
+	ad.dispatch(context.Background(), t.TempDir(), time.Now())
+	time.Sleep(100 * time.Millisecond)
+
+	all := trackingBeads(t, store, "order-run:fail-formula-vars")
+	hasFailed := false
+	for _, b := range all {
+		for _, l := range b.Labels {
+			if l == "wisp-failed" {
+				hasFailed = true
+			}
+		}
+	}
+	if !hasFailed {
+		t.Error("tracking bead missing wisp-failed label after validation failure")
+	}
+	if !rec.hasType(events.OrderFailed) {
+		t.Fatal("missing order.failed event")
+	}
+
+	var failedMessage string
+	for _, event := range rec.events {
+		if event.Type == events.OrderFailed && event.Subject == "fail-formula-vars" {
+			failedMessage = event.Message
+			break
+		}
+	}
+	if failedMessage == "" {
+		t.Fatal("missing order.failed message for formula validation failure")
+	}
+	if !strings.Contains(failedMessage, `variable "target_id" is required`) {
+		t.Fatalf("order.failed message = %q, want missing target_id reported", failedMessage)
+	}
+	if !strings.Contains(failedMessage, `variable "workspace" is required`) {
+		t.Fatalf("order.failed message = %q, want missing workspace reported", failedMessage)
+	}
+	if strings.Contains(failedMessage, "bead title contains unresolved variable(s)") {
+		t.Fatalf("order.failed message = %q, want consolidated required-var validation instead of title-only failure", failedMessage)
+	}
+}
+
 func TestOrderDispatchFormulaLabelFailureLabelsTrackingBead(t *testing.T) {
 	store := beads.NewMemStore()
 	var rec memRecorder

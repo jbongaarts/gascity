@@ -308,8 +308,18 @@ func (m *memoryOrderDispatcher) dispatchWisp(ctx context.Context, store beads.St
 	if a.FormulaLayer != "" {
 		searchPaths = []string{a.FormulaLayer}
 	}
-	recipe, err := formula.Compile(ctx, a.Formula, searchPaths, nil)
+	recipe, err := formula.CompileWithoutRuntimeVarValidation(ctx, a.Formula, searchPaths, nil)
 	if err != nil {
+		m.rec.Record(events.Event{
+			Type:    events.OrderFailed,
+			Actor:   "controller",
+			Subject: scoped,
+			Message: err.Error(),
+		})
+		store.Update(trackingID, beads.UpdateOpts{Labels: []string{"wisp", "wisp-failed"}}) //nolint:errcheck // best-effort
+		return
+	}
+	if err := molecule.ValidateRecipeRuntimeVars(recipe, molecule.Options{}); err != nil {
 		m.rec.Record(events.Event{
 			Type:    events.OrderFailed,
 			Actor:   "controller",

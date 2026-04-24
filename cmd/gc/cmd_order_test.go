@@ -719,6 +719,56 @@ func TestOrderRunNoPool(t *testing.T) {
 	}
 }
 
+func TestOrderRunReportsAllMissingRequiredVarsAtOnce(t *testing.T) {
+	dir := t.TempDir()
+	formulaBody := `
+formula = "order-required-vars"
+version = 1
+
+[vars.target_id]
+description = "Bead being worked on"
+required = true
+
+[vars.workspace]
+description = "Workspace path"
+required = true
+
+[[steps]]
+id = "do-work"
+title = "Do work for {{target_id}}"
+description = "Target: {{target_id}}, workspace: {{workspace}}"
+`
+	if err := os.WriteFile(filepath.Join(dir, "order-required-vars.formula.toml"), []byte(formulaBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	aa := []orders.Order{{
+		Name:         "digest",
+		Formula:      "order-required-vars",
+		Trigger:      "cooldown",
+		Interval:     "24h",
+		FormulaLayer: dir,
+	}}
+
+	store := beads.NewMemStore()
+	var stdout, stderr bytes.Buffer
+	code := doOrderRun(aa, "digest", "", "/city", store, nil, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("doOrderRun = %d, want 1; stdout: %s stderr: %s", code, stdout.String(), stderr.String())
+	}
+
+	errText := stderr.String()
+	if !strings.Contains(errText, `variable "target_id" is required`) {
+		t.Fatalf("stderr = %q, want missing target_id reported", errText)
+	}
+	if !strings.Contains(errText, `variable "workspace" is required`) {
+		t.Fatalf("stderr = %q, want missing workspace reported", errText)
+	}
+	if strings.Contains(errText, "bead title contains unresolved variable(s)") {
+		t.Fatalf("stderr = %q, want consolidated required-var validation instead of title-only failure", errText)
+	}
+}
+
 func TestOrderRunGraphWorkflowDecoratesStepRouting(t *testing.T) {
 	cityDir := t.TempDir()
 	formulaDir := t.TempDir()
