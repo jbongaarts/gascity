@@ -1,6 +1,9 @@
 package api
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/config"
@@ -109,5 +112,61 @@ func TestBuildSessionResumePreservesStoredResolvedCommand(t *testing.T) {
 	cmd, _ := srv.buildSessionResume(info)
 	if got, want := cmd, "claude --dangerously-skip-permissions --settings /tmp/settings.json"; got != want {
 		t.Fatalf("resume command = %q, want %q", got, want)
+	}
+}
+
+// TestBuildSessionResumeRebuildsBareStoredCommandForPoolClaudeAgent is a
+// regression test for gastownhall/gascity#799: when a pool-agent session
+// resumed through the control-dispatcher path has only the bare
+// provider binary ("claude") as its stored command, the API must
+// re-inject schema defaults (--dangerously-skip-permissions) and the
+// provider-owned --settings path from the current resolved config.
+// Before the fix, the bare stored command was preserved as-is and pool
+// workers wedged on interactive permission prompts on resume.
+func TestBuildSessionResumeRebuildsBareStoredCommandForPoolClaudeAgent(t *testing.T) {
+	fs := newSessionFakeState(t)
+	claude := config.BuiltinProviders()["claude"]
+	maxActive := 3
+	gcDir := filepath.Join(fs.cityPath, ".gc")
+	if err := os.MkdirAll(gcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gcDir, "settings.json"), []byte(`{"hooks":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{
+				Name:              "perspective_planner",
+				Provider:          "claude",
+				MaxActiveSessions: &maxActive,
+			},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"claude": claude,
+		},
+	}
+
+	srv := New(fs)
+	info := session.Info{
+		ID:         "gc-1",
+		Template:   "perspective_planner",
+		Command:    "claude",
+		Provider:   "claude",
+		WorkDir:    fs.cityPath,
+		SessionKey: "abc-123",
+		ResumeFlag: "--resume",
+	}
+
+	cmd, _ := srv.buildSessionResume(info)
+	if !strings.Contains(cmd, "--dangerously-skip-permissions") {
+		t.Fatalf("resume command missing default args:\n  got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "--resume abc-123") {
+		t.Fatalf("resume command missing resume flag:\n  got: %s", cmd)
+	}
+	if !strings.Contains(cmd, "--settings") {
+		t.Fatalf("resume command missing settings arg:\n  got: %s", cmd)
 	}
 }

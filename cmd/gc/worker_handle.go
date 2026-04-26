@@ -366,7 +366,16 @@ func shouldPreserveStoredRuntimeCommand(storedCommand, resolvedCommand string) b
 	if resolvedCommand == "" {
 		return true
 	}
-	return storedCommand == resolvedCommand || strings.HasPrefix(storedCommand, resolvedCommand+" ")
+	// A bare stored command (just the provider binary) lacks schema
+	// defaults like --dangerously-skip-permissions and the --settings
+	// path. Rebuild from the current config instead of preserving it.
+	// See #799: pool-agent sessions resumed through the control-
+	// dispatcher path wedged on interactive permission prompts because
+	// the bare stored command was preserved without re-injecting flags.
+	if storedCommand == resolvedCommand {
+		return false
+	}
+	return strings.HasPrefix(storedCommand, resolvedCommand+" ")
 }
 
 func resolveWorkerRuntimeWithConfig(cfg *config.City, info session.Info, sessionKind string) *config.ResolvedProvider {

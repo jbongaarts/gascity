@@ -143,6 +143,62 @@ func TestResolvedWorkerRuntimeWithConfigUsesProviderLaunchCommand(t *testing.T) 
 	}
 }
 
+// TestResolvedWorkerRuntimeResumesPoolSessionPreservesLaunchFlags is a
+// regression test for gastownhall/gascity#799: a pool-agent session
+// resumed through the control-dispatcher path must reconstruct the full
+// launch command (--dangerously-skip-permissions, --settings, schema
+// defaults) even when the persisted session command is the bare
+// provider name. The pre-fix path dropped those flags and caused pool
+// workers resumed via `claude --resume <uuid>` to wedge on interactive
+// permission prompts.
+func TestResolvedWorkerRuntimeResumesPoolSessionPreservesLaunchFlags(t *testing.T) {
+	cityDir := t.TempDir()
+	gcDir := filepath.Join(cityDir, ".gc")
+	if err := os.MkdirAll(gcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gcDir, "settings.json"), []byte(`{"hooks":{}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	claude := config.BuiltinProviders()["claude"]
+	maxActive := 3
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name:              "perspective_planner",
+			Provider:          "claude",
+			MaxActiveSessions: &maxActive,
+		}},
+		Providers: map[string]config.ProviderSpec{
+			"claude": claude,
+		},
+	}
+
+	// Simulate a pool-instance session bead whose persisted command is
+	// the bare provider name — the shape produced before the April 2026
+	// worker-boundary refactor when the API created the bead with
+	// sessionCreateAgentCommand(resolved) before the reconciler synced
+	// the full tp.Command.
+	runtimeCfg := resolvedWorkerRuntimeWithConfig(cityDir, cfg, session.Info{
+		Template: "perspective_planner",
+		Command:  "claude",
+		WorkDir:  cityDir,
+	}, "")
+	if runtimeCfg == nil {
+		t.Fatal("resolvedWorkerRuntimeWithConfig() = nil")
+	}
+	if !strings.Contains(runtimeCfg.Command, "--dangerously-skip-permissions") {
+		t.Fatalf("resumed pool Command = %q, want --dangerously-skip-permissions", runtimeCfg.Command)
+	}
+	if !strings.Contains(runtimeCfg.Command, "--effort max") {
+		t.Fatalf("resumed pool Command = %q, want --effort max default", runtimeCfg.Command)
+	}
+	if !strings.Contains(runtimeCfg.Command, "--settings") {
+		t.Fatalf("resumed pool Command = %q, want --settings arg", runtimeCfg.Command)
+	}
+}
+
 func TestWorkerHandleForSessionWithConfigUsesResolvedProviderOnResume(t *testing.T) {
 	skipSlowCmdGCTest(t, "waits through stale session-key detection; run make test-cmd-gc-process for full coverage")
 	cityDir := t.TempDir()
