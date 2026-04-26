@@ -55,6 +55,10 @@ func finalizeInit(cityPath string, stdout, stderr io.Writer, opts initFinalizeOp
 		fmt.Fprintf(stderr, "%s: install the missing dependencies, then run 'gc start'\n", opts.commandName) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	if missingKeys := checkDoltAuthorIdentity(cityPath); len(missingKeys) > 0 {
+		printMissingDoltAuthorIdentity(stderr, opts.commandName, missingKeys)
+		return 1
+	}
 
 	if opts.showProgress {
 		if opts.skipProviderReadiness {
@@ -449,6 +453,17 @@ var initRunVersionCommandContext = exec.CommandContext
 
 var initRunVersionTimeout = 2 * time.Second
 
+var initRunDoltConfigGet = func(key string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), initRunVersionTimeout)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "dolt", "config", "--global", "--get", key).Output()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", fmt.Errorf("dolt config probe timed out after %s", initRunVersionTimeout)
+	}
+	return strings.TrimSpace(string(out)), err
+}
+
 // initRunVersion runs "<binary> version" and returns the first line.
 // Tests can override this.
 var initRunVersion = func(binary string) (string, error) {
@@ -567,6 +582,56 @@ func checkHardDependencies(cityPath string) []missingDep {
 		}
 	}
 	return missing
+}
+
+func checkDoltAuthorIdentity(cityPath string) []string {
+	if !initNeedsLocalDoltIdentity(cityPath) {
+		return nil
+	}
+	if _, err := initLookPath("dolt"); err != nil {
+		return nil
+	}
+	var missing []string
+	for _, key := range []string{"user.name", "user.email"} {
+		value, err := initRunDoltConfigGet(key)
+		if err != nil && strings.TrimSpace(value) == "" {
+			missing = append(missing, key)
+			continue
+		}
+		if strings.TrimSpace(value) == "" {
+			missing = append(missing, key)
+		}
+	}
+	return missing
+}
+
+func initNeedsLocalDoltIdentity(cityPath string) bool {
+	if strings.TrimSpace(os.Getenv("GC_DOLT")) == "skip" {
+		return false
+	}
+	if !initNeedsBdTooling(cityPath) {
+		return false
+	}
+	if cityUsesBdStoreContract(cityPath) && isExternalDolt(cityPath) {
+		return false
+	}
+	return true
+}
+
+func printMissingDoltAuthorIdentity(stderr io.Writer, commandName string, missingKeys []string) {
+	fmt.Fprintf(stderr, "%s: city created, but startup is blocked by Dolt author identity\n\n", commandName) //nolint:errcheck // best-effort stderr
+	fmt.Fprintln(stderr, "Managed bd storage requires Dolt author identity before it can initialize.")       //nolint:errcheck // best-effort stderr
+	fmt.Fprintln(stderr, "")                                                                                 //nolint:errcheck // best-effort stderr
+	fmt.Fprintln(stderr, "Missing Dolt config:")                                                             //nolint:errcheck // best-effort stderr
+	for _, key := range missingKeys {
+		fmt.Fprintf(stderr, "  - %s\n", key) //nolint:errcheck // best-effort stderr
+	}
+	fmt.Fprintln(stderr, "")                                                             //nolint:errcheck // best-effort stderr
+	fmt.Fprintln(stderr, `Set it with:`)                                                 //nolint:errcheck // best-effort stderr
+	fmt.Fprintln(stderr, `  dolt config --global --add user.name "Your Name"`)           //nolint:errcheck // best-effort stderr
+	fmt.Fprintln(stderr, `  dolt config --global --add user.email "you@example.com"`)    //nolint:errcheck // best-effort stderr
+	fmt.Fprintln(stderr, "")                                                             //nolint:errcheck // best-effort stderr
+	fmt.Fprintf(stderr, "%s: set the Dolt identity, then run 'gc start'\n", commandName) //nolint:errcheck // best-effort stderr
 }
 
 func initAnyToolAvailable(names ...string) bool {

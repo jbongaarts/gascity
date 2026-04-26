@@ -25,6 +25,41 @@ func disableBootstrapForTests(t *testing.T) {
 	t.Cleanup(func() { bootstrap.BootstrapPacks = old })
 }
 
+func stubInitDependencyChecks(t *testing.T) {
+	t.Helper()
+	oldLookPath := initLookPath
+	initLookPath = func(name string) (string, error) {
+		return "/usr/bin/" + name, nil
+	}
+	t.Cleanup(func() { initLookPath = oldLookPath })
+
+	oldRunVersion := initRunVersion
+	initRunVersion = func(binary string) (string, error) {
+		switch binary {
+		case "bd":
+			return "bd version " + bdMinVersion, nil
+		case "dolt":
+			return "dolt version " + doltMinVersion, nil
+		default:
+			return binary + " version", nil
+		}
+	}
+	t.Cleanup(func() { initRunVersion = oldRunVersion })
+}
+
+func stubInitDoltAuthorIdentity(t *testing.T, values map[string]string) {
+	t.Helper()
+	old := initRunDoltConfigGet
+	initRunDoltConfigGet = func(key string) (string, error) {
+		value := strings.TrimSpace(values[key])
+		if value == "" {
+			return "", os.ErrNotExist
+		}
+		return value, nil
+	}
+	t.Cleanup(func() { initRunDoltConfigGet = old })
+}
+
 func TestMaybePrintWizardProviderGuidanceNeedsAuth(t *testing.T) {
 	oldProbe := initProbeProvidersReadiness
 	initProbeProvidersReadiness = func(_ context.Context, _ []string, fresh bool) (map[string]api.ReadinessItem, error) {
@@ -883,9 +918,57 @@ func TestFinalizeInitCanonicalizesBdStoreBeforeProviderReadinessBlock(t *testing
 	}
 }
 
+func TestFinalizeInitBlocksManagedBdWhenDoltIdentityMissing(t *testing.T) {
+	configureIsolatedRuntimeEnv(t)
+	t.Setenv("GC_BEADS", "bd")
+	t.Setenv("GC_DOLT", "")
+	disableBootstrapForTests(t)
+	stubInitDependencyChecks(t)
+	stubInitDoltAuthorIdentity(t, map[string]string{})
+
+	cityPath := filepath.Join(t.TempDir(), "bright-lights")
+	var initStdout, initStderr bytes.Buffer
+	code := doInit(fsys.OSFS{}, cityPath, wizardConfig{
+		configName: "minimal",
+		provider:   "claude",
+	}, "", &initStdout, &initStderr)
+	if code != 0 {
+		t.Fatalf("doInit = %d, want 0: %s", code, initStderr.String())
+	}
+
+	oldProbe := initProbeProvidersReadiness
+	initProbeProvidersReadiness = func(context.Context, []string, bool) (map[string]api.ReadinessItem, error) {
+		t.Fatal("provider readiness should not run before Dolt identity is configured")
+		return nil, nil
+	}
+	t.Cleanup(func() { initProbeProvidersReadiness = oldProbe })
+
+	var stdout, stderr bytes.Buffer
+	code = finalizeInit(cityPath, &stdout, &stderr, initFinalizeOptions{commandName: "gc init"})
+	if code != 1 {
+		t.Fatalf("finalizeInit = %d, want 1", code)
+	}
+	text := stderr.String()
+	for _, want := range []string{
+		"startup is blocked by Dolt author identity",
+		"user.name",
+		"user.email",
+		`dolt config --global --add user.name "Your Name"`,
+		`dolt config --global --add user.email "you@example.com"`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("stderr missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestFinalizeInitCanonicalizesBdStoreBeforeProviderReadinessBlockWithoutSkip(t *testing.T) {
 	t.Setenv("GC_BEADS", "bd")
 	configureIsolatedRuntimeEnv(t)
+	stubInitDoltAuthorIdentity(t, map[string]string{
+		"user.name":  "gc-test",
+		"user.email": "gc-test@test.local",
+	})
 
 	cityPath := filepath.Join(t.TempDir(), "bright-lights")
 	var initStdout, initStderr bytes.Buffer
@@ -935,6 +1018,10 @@ func TestFinalizeInitCanonicalizesBdStoreBeforeProviderReadinessBlockWithoutSkip
 func TestFinalizeInitDoesNotRunBdProviderBeforeProviderReadinessBlock(t *testing.T) {
 	configureIsolatedRuntimeEnv(t)
 	t.Setenv("GC_DOLT", "")
+	stubInitDoltAuthorIdentity(t, map[string]string{
+		"user.name":  "gc-test",
+		"user.email": "gc-test@test.local",
+	})
 
 	cityPath := filepath.Join(t.TempDir(), "bright-lights")
 	var initStdout, initStderr bytes.Buffer
