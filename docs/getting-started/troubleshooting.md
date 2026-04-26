@@ -100,6 +100,15 @@ check.
 | bd | 1.0.0 | [releases](https://github.com/gastownhall/beads/releases) | [releases](https://github.com/gastownhall/beads/releases) |
 | flock | -- | `brew install flock` | `apt install util-linux` |
 
+### Optional for GitHub gates
+
+| Tool | macOS | Linux |
+|------|-------|-------|
+| gh | `brew install gh` | [cli.github.com](https://cli.github.com/) |
+
+Gas City can run without `gh`. Maintenance skips GitHub gate checks when the
+GitHub CLI is not installed.
+
 If you do not want to install dolt, bd, and flock, switch to the file-based
 store:
 
