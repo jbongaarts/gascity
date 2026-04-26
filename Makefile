@@ -20,7 +20,7 @@ LDFLAGS := -X main.version=$(VERSION) \
            -X main.commit=$(COMMIT) \
            -X main.date=$(BUILD_TIME)
 
-.PHONY: build check check-all check-bd check-docker check-docs check-dolt check-version-tag lint fmt-check fmt vet test test-cmd-gc-process test-worker-core test-worker-core-phase2 test-worker-core-phase2-real-transport test-worker-inference-phase3 test-acceptance test-acceptance-b test-acceptance-c test-acceptance-all test-tutorial-goldens test-tutorial-regression test-tutorial test-integration test-integration-shards test-integration-shards-cover test-integration-packages test-integration-packages-cover test-integration-review-formulas test-integration-review-formulas-cover test-integration-review-formulas-basic test-integration-review-formulas-basic-cover test-integration-review-formulas-retries test-integration-review-formulas-retries-cover test-integration-review-formulas-recovery test-integration-review-formulas-recovery-cover test-integration-bdstore test-integration-bdstore-cover test-integration-rest test-integration-rest-cover test-integration-rest-smoke test-integration-rest-smoke-cover test-integration-rest-full test-integration-rest-full-cover test-mcp-mail test-docker test-k8s test-cover cover install install-tools install-buildx setup clean generate check-schema docker-base docker-agent docker-controller docs-dev dashboard-smoke
+.PHONY: build check check-all check-bd check-docker check-docs check-dolt check-version-tag lint fmt-check fmt vet test test-fsys-darwin-compile test-cmd-gc-process test-worker-core test-worker-core-phase2 test-worker-core-phase2-real-transport test-worker-inference-phase3 test-acceptance test-acceptance-b test-acceptance-c test-acceptance-all test-tutorial-goldens test-tutorial-regression test-tutorial test-integration test-integration-shards test-integration-shards-cover test-integration-packages test-integration-packages-cover test-integration-review-formulas test-integration-review-formulas-cover test-integration-review-formulas-basic test-integration-review-formulas-basic-cover test-integration-review-formulas-retries test-integration-review-formulas-retries-cover test-integration-review-formulas-recovery test-integration-review-formulas-recovery-cover test-integration-bdstore test-integration-bdstore-cover test-integration-rest test-integration-rest-cover test-integration-rest-smoke test-integration-rest-smoke-cover test-integration-rest-full test-integration-rest-full-cover test-mcp-mail test-docker test-k8s test-cover cover install install-tools install-buildx setup clean generate check-schema docker-base docker-agent docker-controller docs-dev dashboard-smoke
 
 ## build: compile gc binary with version metadata
 build:
@@ -165,8 +165,15 @@ TEST_ENV = env -i \
 ## The skipped cmd/gc process-backed scenarios remain covered by
 ## `make test-cmd-gc-process` locally and the CI `cmd/gc process suite` job.
 ## Wrapped in $(TEST_ENV) — see comment above for why.
-test:
+test: test-fsys-darwin-compile
 	$(TEST_ENV) GC_FAST_UNIT=1 go test ./...
+
+## test-fsys-darwin-compile: cross-compile internal/fsys for macOS so
+## unix.Stat_t field-type regressions fail in the default fast test path.
+test-fsys-darwin-compile:
+	@tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	$(TEST_ENV) GOOS=darwin GOARCH=arm64 go test -c -o "$$tmp/fsys.test" ./internal/fsys
 
 ## test-cmd-gc-process: run the full non-short cmd/gc suite, including the
 ## process-backed lifecycle coverage routed out of the default fast loop
@@ -349,7 +356,7 @@ UNIT_COVER_PKGS := $(shell go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.Im
 ## test-cover: run fast unit-test coverage without the integration-tagged package sweep
 ## The skipped cmd/gc process-backed scenarios remain covered by
 ## `make test-cmd-gc-process` locally and the CI `cmd/gc process suite` job.
-test-cover:
+test-cover: test-fsys-darwin-compile
 	$(TEST_ENV) GC_FAST_UNIT=1 go test -timeout 8m -coverprofile=coverage.txt $(UNIT_COVER_PKGS)
 
 ## cover: run tests and show coverage report
