@@ -2146,6 +2146,37 @@ func TestInitBeadsForDirExecSetsBEADSDIR(t *testing.T) {
 	}
 }
 
+func TestInitBeadsForDirExecWithoutCityPathPreservesAmbientEnv(t *testing.T) {
+	rigDir := t.TempDir()
+	logFile := filepath.Join(t.TempDir(), "env.log")
+	script := filepath.Join(t.TempDir(), "record-env")
+	content := fmt.Sprintf("#!/bin/sh\nif [ \"$1\" = init ]; then printf '%%s|%%s\\n' \"${GC_DOLT_HOST:-}\" \"${BEADS_DIR:-<unset>}\" > %q; fi\nexit 0\n", logFile)
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GC_BEADS", "exec:"+script)
+	t.Setenv("GC_DOLT_HOST", "ambient-dolt")
+	if err := initBeadsForDir("", rigDir, "rg", ""); err != nil {
+		t.Fatalf("initBeadsForDir: %v", err)
+	}
+
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("read env log: %v", err)
+	}
+	parts := strings.Split(strings.TrimSpace(string(data)), "|")
+	if len(parts) != 2 {
+		t.Fatalf("env log = %q, want host|beads_dir", string(data))
+	}
+	if got := parts[0]; got != "ambient-dolt" {
+		t.Fatalf("GC_DOLT_HOST = %q, want ambient-dolt", got)
+	}
+	if got, want := parts[1], filepath.Join(rigDir, ".beads"); got != want {
+		t.Fatalf("BEADS_DIR = %q, want %q", got, want)
+	}
+}
+
 func TestInitBeadsForDirExecPreventsStrayGitInit(t *testing.T) {
 	configureTestDoltIdentityEnv(t)
 
@@ -2183,8 +2214,10 @@ func TestInitBeadsForDirExecPreventsStrayGitInit(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(rawDir, ".beads")); err != nil {
 		t.Fatalf("direct bd init did not create .beads: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(rawDir, ".git")); err != nil {
-		t.Fatalf("direct bd init should create .git when BEADS_DIR is unset: %v", err)
+	if _, err := os.Stat(filepath.Join(rawDir, ".git")); err == nil {
+		t.Log("direct bd init created .git without BEADS_DIR")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat direct bd init .git: %v", err)
 	}
 
 	cityDir := t.TempDir()
