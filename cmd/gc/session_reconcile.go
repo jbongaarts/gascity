@@ -483,12 +483,41 @@ func healExpiredTimers(session *beads.Bead, store beads.Store, clk clock.Clock) 
 }
 
 // checkStability detects rapid exits. If a session was woken within
-// stabilityThreshold and is already dead, counts as a crash.
-// Returns true if a failure was recorded (caller should skip recordWakeFailure).
+// stabilityThreshold and is already dead, counts it as either a provider
+// rate-limit hold or a crash.
+// Returns true if a stability event was recorded.
 // Edge-triggered: clears last_woke_at after recording so the same crash
 // is counted exactly once.
 // Drain-aware: draining sessions died by request, not by crash.
-func checkStability(session *beads.Bead, cfg *config.City, alive bool, dt *drainTracker, store beads.Store, clk clock.Clock) bool {
+func checkStability(session *beads.Bead, cfg *config.City, alive bool, dt *drainTracker, store beads.Store, clk clock.Clock, peek func(lines int) (string, error)) bool {
+	if checkRateLimitStability(session, cfg, alive, dt, store, clk, peek) {
+		return true
+	}
+	if !rapidExitWithinStabilityThreshold(session, cfg, alive, dt, clk) {
+		return false
+	}
+	recordWakeFailure(session, store, clk)
+	clearLastWokeAt(session, store)
+	return true
+}
+
+func checkRateLimitStability(session *beads.Bead, cfg *config.City, alive bool, dt *drainTracker, store beads.Store, clk clock.Clock, peek func(lines int) (string, error)) bool {
+	if !rapidExitWithinStabilityThreshold(session, cfg, alive, dt, clk) {
+		return false
+	}
+	if peek == nil {
+		return false
+	}
+	content, err := peek(rateLimitPeekLines)
+	if err != nil || !runtime.ContainsRateLimitDialog(content) {
+		return false
+	}
+	recordRateLimitQuarantine(session, store, clk)
+	clearLastWokeAt(session, store)
+	return true
+}
+
+func rapidExitWithinStabilityThreshold(session *beads.Bead, cfg *config.City, alive bool, dt *drainTracker, clk clock.Clock) bool {
 	if alive {
 		return false
 	}
@@ -517,14 +546,32 @@ func checkStability(session *beads.Bead, cfg *config.City, alive bool, dt *drain
 	if err != nil {
 		return false
 	}
-	if clk.Now().Sub(t) < stabilityThreshold {
-		recordWakeFailure(session, store, clk)
-		// Clear last_woke_at so this crash is not re-counted next tick.
-		_ = store.SetMetadata(session.ID, "last_woke_at", "")
-		session.Metadata["last_woke_at"] = ""
-		return true
+	return clk.Now().Sub(t) < stabilityThreshold
+}
+
+func clearLastWokeAt(session *beads.Bead, store beads.Store) {
+	_ = store.SetMetadata(session.ID, "last_woke_at", "")
+	session.Metadata["last_woke_at"] = ""
+}
+
+// recordRateLimitQuarantine backs off a session that exited into a provider
+// rate-limit screen without treating the exit as a crash or resetting its
+// conversation metadata.
+func recordRateLimitQuarantine(session *beads.Bead, store beads.Store, clk clock.Clock) {
+	if session.Metadata == nil {
+		session.Metadata = make(map[string]string)
 	}
-	return false
+	qUntil := clk.Now().Add(defaultRateLimitQuarantineDuration).UTC().Format(time.RFC3339)
+	batch := map[string]string{
+		"state":             string(sessionpkg.StateAsleep),
+		"quarantined_until": qUntil,
+		"sleep_reason":      "rate_limit",
+	}
+	if err := store.SetMetadataBatch(session.ID, batch); err == nil {
+		for k, v := range batch {
+			session.Metadata[k] = v
+		}
+	}
 }
 
 // recordWakeFailure increments wake_attempts and quarantines if threshold exceeded.
@@ -651,7 +698,7 @@ func checkChurn(session *beads.Bead, cfg *config.City, alive bool, dt *drainTrac
 func isDeliberateSleepReason(reason string) bool {
 	switch strings.TrimSpace(reason) {
 	case "idle", "idle-timeout", "no-wake-reason", "config-drift", "drained",
-		sleepReasonCityStop, "user-hold", "wait-hold":
+		sleepReasonCityStop, "user-hold", "wait-hold", "rate_limit":
 		return true
 	default:
 		return false

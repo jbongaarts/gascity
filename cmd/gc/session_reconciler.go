@@ -730,6 +730,14 @@ func reconcileSessionBeadsTraced(
 
 		policy := resolveSessionSleepPolicy(*session, cfg, sp)
 
+		peek := func(lines int) (string, error) {
+			return workerSessionTargetPeekWithConfig(cityPath, store, sp, cfg, session.ID, lines, tp.Hints.ProcessNames)
+		}
+
+		if checkRateLimitStability(session, cfg, alive, dt, store, clk, peek) {
+			continue // rate-limit hold recorded before state healing resets continuity metadata
+		}
+
 		// Heal advisory state metadata.
 		stateBeforeHeal := sessionpkg.State(strings.TrimSpace(session.Metadata["state"]))
 		healState(session, alive, store, clk)
@@ -738,9 +746,9 @@ func reconcileSessionBeadsTraced(
 		}
 		reconcileDetachedAt(session, store, policy, alive, sp, clk)
 
-		// Stability check: detect rapid exit (crash).
-		if checkStability(session, cfg, alive, dt, store, clk) {
-			continue // crash recorded, skip further processing
+		// Stability check: detect rapid exit (rate-limit screen or crash).
+		if checkStability(session, cfg, alive, dt, store, clk, nil) {
+			continue // rapid exit recorded, skip further processing
 		}
 
 		// Churn check: detect context exhaustion death spiral.
