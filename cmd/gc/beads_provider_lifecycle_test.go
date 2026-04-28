@@ -3643,6 +3643,156 @@ esac
 	}
 }
 
+func TestGcBeadsBdInitDefaultsBeadsRoleOnFreshInit(t *testing.T) {
+	cityPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeBuiltinPacks(cityPath); err != nil {
+		t.Fatalf("MaterializeBuiltinPacks: %v", err)
+	}
+	script := gcBeadsBdScriptPath(cityPath)
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	argsFile := filepath.Join(t.TempDir(), "bd-init-args")
+	fakeBd := filepath.Join(binDir, "bd")
+	fakeBdScript := fmt.Sprintf(`#!/bin/sh
+set -eu
+case "${1:-}" in
+  init)
+    printf '%%s\n' "$*" > %q
+    last=""
+    for arg in "$@"; do
+      last="$arg"
+    done
+    mkdir -p "$last/.beads"
+    cat > "$last/.beads/metadata.json" <<'JSON'
+{"database":"dolt","backend":"dolt","dolt_mode":"server","dolt_database":"gascity","project_id":"fresh-project"}
+JSON
+    exit 0
+    ;;
+  config|migrate|list)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`, argsFile)
+	if err := os.WriteFile(fakeBd, []byte(fakeBdScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeDolt := filepath.Join(binDir, "dolt")
+	if err := os.WriteFile(fakeDolt, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(script, "init", cityPath, "gc", "gascity")
+	cmd.Env = sanitizedBaseEnv(
+		"GC_CITY_PATH="+cityPath,
+		"PATH="+strings.Join([]string{binDir, os.Getenv("PATH")}, string(os.PathListSeparator)),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gc-beads-bd init failed: %v\n%s", err, out)
+	}
+
+	data, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read bd init args: %v", err)
+	}
+	args := string(data)
+	if !strings.Contains(args, "--role maintainer") {
+		t.Fatalf("bd init args = %q, want --role maintainer", args)
+	}
+}
+
+func TestGcBeadsBdInitDefaultsBeadsRoleOnMetadataFastPath(t *testing.T) {
+	cityPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(cityPath, ".beads"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, ".beads", "metadata.json"), []byte(`{"database":"dolt","backend":"dolt","dolt_mode":"server","dolt_database":"gascity","project_id":"existing-project"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := MaterializeBuiltinPacks(cityPath); err != nil {
+		t.Fatalf("MaterializeBuiltinPacks: %v", err)
+	}
+	script := gcBeadsBdScriptPath(cityPath)
+
+	binDir := filepath.Join(t.TempDir(), "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeBd := filepath.Join(binDir, "bd")
+	fakeBdScript := `#!/bin/sh
+set -eu
+case "${1:-}" in
+  init)
+    exit 99
+    ;;
+  config|migrate|list)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	if err := os.WriteFile(fakeBd, []byte(fakeBdScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	roleFile := filepath.Join(t.TempDir(), "role-config")
+	fakeGit := filepath.Join(binDir, "git")
+	fakeGitScript := fmt.Sprintf(`#!/bin/sh
+set -eu
+if [ "$1" = "config" ] && [ "$2" = "--local" ] && [ "$3" = "--get" ] && [ "$4" = "beads.role" ]; then
+  exit 1
+fi
+if [ "$1" = "config" ] && [ "$2" = "--local" ] && [ "$3" = "beads.role" ] && [ "$4" = "maintainer" ]; then
+  printf 'set-local-maintainer\n' > %q
+  exit 0
+fi
+exit 0
+`, roleFile)
+	if err := os.WriteFile(fakeGit, []byte(fakeGitScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	fakeDolt := filepath.Join(binDir, "dolt")
+	if err := os.WriteFile(fakeDolt, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(script, "init", cityPath, "gc", "gascity")
+	cmd.Env = sanitizedBaseEnv(
+		"GC_CITY_PATH="+cityPath,
+		"PATH="+strings.Join([]string{binDir, os.Getenv("PATH")}, string(os.PathListSeparator)),
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gc-beads-bd init failed: %v\n%s", err, out)
+	}
+
+	data, err := os.ReadFile(roleFile)
+	if err != nil {
+		t.Fatalf("read role config marker: %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != "set-local-maintainer" {
+		t.Fatalf("role config marker = %q, want set-local-maintainer", got)
+	}
+}
+
 func TestGcBeadsBdInitFailsWhenBeadsDirPermissionsCannotBeTightened(t *testing.T) {
 	cityPath := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {

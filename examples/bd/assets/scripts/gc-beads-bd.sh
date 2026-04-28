@@ -1637,6 +1637,16 @@ run_bd_pinned() {
     )
 }
 
+ensure_beads_role() {
+    local dir="$1"
+    (
+        cd "$dir" || exit 0
+        command -v git >/dev/null 2>&1 || exit 0
+        git config --local --get beads.role >/dev/null 2>&1 && exit 0
+        git config --local beads.role maintainer >/dev/null 2>&1 || true
+    )
+}
+
 ensure_beads_dir_permissions() {
     local dir="$1"
     local beads_dir="$dir/.beads"
@@ -1746,6 +1756,7 @@ op_init() {
             # and bd-specific bootstrap only.
             ensure_beads_dir_permissions "$dir"
             normalize_scope_after_init "$dir" "$prefix" "$dolt_database"
+            ensure_beads_role "$dir"
             run_bd_pinned "$dir" config set issue_prefix "$prefix" 2>/dev/null || true
             run_bd_pinned "$dir" config set types.custom "$custom_types" 2>/dev/null || true
             backfill_project_id_if_missing "$dir"
@@ -1775,7 +1786,7 @@ op_init() {
     fi
 
     # Run bd init in server mode.
-    (cd "$dir" && bd init --quiet --server -p "$init_prefix" --skip-hooks --skip-agents         --server-host "$host" --server-port "$DOLT_PORT"         "$dir") || die "bd init failed for $dir"
+    (cd "$dir" && bd init --quiet --role maintainer --server -p "$init_prefix" --skip-hooks --skip-agents         --server-host "$host" --server-port "$DOLT_PORT"         "$dir") || die "bd init failed for $dir"
 
     # Drop orphan database created by bd init (upstream gt-sv1h).
     # bd init --prefix creates beads_<prefix> on the Dolt server, but we
@@ -1788,6 +1799,7 @@ op_init() {
     # GC owns canonical metadata/config normalization after this backend
     # bridge returns. Keep bd-specific config/migration here only.
     ensure_beads_dir_permissions "$dir"
+    ensure_beads_role "$dir"
 
     # Keep bd's runtime config in sync with GC's canonical prefix. This is
     # compatibility state for raw bd operations, not a second GC authority.
