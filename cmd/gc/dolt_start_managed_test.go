@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	bdpack "github.com/gastownhall/gascity/examples/bd"
 )
 
 func TestDoltServerEnv_AppendsDefaultWhenMissing(t *testing.T) {
@@ -100,11 +102,18 @@ func TestGCBeadsBDScript_UsesPortableSleepMS(t *testing.T) {
 		t.Fatalf("read %s: %v", scriptPath, err)
 	}
 	script := string(data)
+	embedded, err := bdpack.PackFS.ReadFile("assets/scripts/gc-beads-bd.sh")
+	if err != nil {
+		t.Fatalf("read embedded gc-beads-bd.sh: %v", err)
+	}
+	if string(embedded) != script {
+		t.Fatalf("embedded gc-beads-bd.sh differs from source script")
+	}
 
 	if !strings.Contains(script, "sleep_ms()") {
 		t.Fatalf("gc-beads-bd.sh must define portable sleep_ms helper")
 	}
-	if strings.Contains(script, "awk \"BEGIN") {
-		t.Fatalf("gc-beads-bd.sh must not use awk for millisecond sleep math")
+	if got := strings.Count(script, `sleep_ms "$backoff_ms" 2>/dev/null || sleep 1`); got < 2 {
+		t.Fatalf("gc-beads-bd.sh must use sleep_ms for retry backoff sleeps; found %d call sites", got)
 	}
 }
