@@ -689,7 +689,7 @@ func SlingFormulaTargetBranch(beadID string, deps SlingDeps, a config.Agent) str
 
 // BuildSlingFormulaVars builds the variable map for formula instantiation.
 func BuildSlingFormulaVars(formulaName, beadID string, userVars []string, a config.Agent, deps SlingDeps) map[string]string {
-	vars := make(map[string]string, len(userVars)+3)
+	vars := make(map[string]string, len(userVars)+6)
 	for _, v := range userVars {
 		key, value, ok := strings.Cut(v, "=")
 		if ok && key != "" {
@@ -705,10 +705,19 @@ func BuildSlingFormulaVars(formulaName, beadID string, userVars []string, a conf
 		}
 		vars[key] = value
 	}
+	addRoutingVar := func(key, value string) {
+		if _, explicit := vars[key]; explicit {
+			return
+		}
+		vars[key] = value
+	}
 
 	if beadID != "" {
 		addVar("issue", beadID)
 	}
+	addRoutingVar("rig_name", a.Dir)
+	addRoutingVar("binding_name", a.BindingName)
+	addRoutingVar("binding_prefix", a.BindingPrefix())
 
 	autoBranch := SlingFormulaTargetBranch(beadID, deps, a)
 	if SlingFormulaUsesBaseBranch(formulaName) {

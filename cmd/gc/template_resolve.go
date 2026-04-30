@@ -276,6 +276,8 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 		CityRoot:      p.cityPath,
 		AgentName:     qualifiedName,
 		TemplateName:  cfgAgent.Name,
+		BindingName:   cfgAgent.BindingName,
+		BindingPrefix: cfgAgent.BindingPrefix(),
 		RigName:       rigName,
 		RigRoot:       rigRoot,
 		WorkDir:       workDir,
