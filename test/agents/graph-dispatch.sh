@@ -69,7 +69,7 @@ ref_matches_suffix_list() {
     for suffix in "${suffixes[@]}"; do
         suffix=$(trim_spaces "$suffix")
         [ -n "$suffix" ] || continue
-        if [[ "$ref" == *"$suffix"* ]]; then
+        if [[ "$ref" == *"$suffix" ]]; then
             return 0
         fi
     done

@@ -234,7 +234,11 @@ func TestAdoptPRFormulaRetriesTransientReviewerStep(t *testing.T) {
 
 func TestAdoptPRFormulaSoftFailsGeminiAfterTransientRetries(t *testing.T) {
 	cityDir := setupReviewFormulaCity(t, "success", map[string]string{
-		"GC_GRAPH_ALWAYS_TRANSIENT_SUFFIXES": "review-loop.iteration.1.review-pipeline.review-gemini.attempt.",
+		"GC_GRAPH_ALWAYS_TRANSIENT_SUFFIXES": strings.Join([]string{
+			"review-loop.iteration.1.review-pipeline.review-gemini.attempt.1",
+			"review-loop.iteration.1.review-pipeline.review-gemini.attempt.2",
+			"review-loop.iteration.1.review-pipeline.review-gemini.attempt.3",
+		}, ","),
 	})
 	_, workflowID := startReviewWorkflow(t, cityDir, "mol-adopt-pr-v2", map[string]string{
 		"issue":       "",

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -266,6 +267,17 @@ func TestHiddenAttachedClientCanSendText(t *testing.T) {
 	}
 	out, _ := tm.CapturePaneAll(sessionName)
 	t.Fatalf("CapturePaneAll did not contain hidden attach text:\n%s", out)
+}
+
+func TestHiddenAttachScriptArgsArePlatformSpecific(t *testing.T) {
+	tmuxArgs := []string{"-u", "-L", "socket", "attach-session", "-t", "target"}
+
+	if got, want := hiddenAttachScriptArgs("darwin", tmuxArgs), []string{"-q", "/dev/null", "tmux", "-u", "-L", "socket", "attach-session", "-t", "target"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("darwin script args = %#v, want %#v", got, want)
+	}
+	if got, want := hiddenAttachScriptArgs("linux", tmuxArgs), []string{"-qfc", "tmux -u -L socket attach-session -t target", "/dev/null"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("linux script args = %#v, want %#v", got, want)
+	}
 }
 
 func TestSendKeysAndCapture(t *testing.T) {

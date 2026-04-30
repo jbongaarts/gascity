@@ -60,6 +60,24 @@ func configureIsolatedRuntimeEnv(t *testing.T) {
 	}
 }
 
+func TestRunDoesNotLeakPersistentCityOrRigFlags(t *testing.T) {
+	prevCityFlag, prevRigFlag := cityFlag, rigFlag
+	t.Cleanup(func() {
+		cityFlag = prevCityFlag
+		rigFlag = prevRigFlag
+	})
+	cityFlag = "previous-city"
+	rigFlag = "previous-rig"
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--city", "/tmp/leaked-city", "--rig", "leaked-rig", "version"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("run(version) = %d; stderr: %s", code, stderr.String())
+	}
+	if cityFlag != "previous-city" || rigFlag != "previous-rig" {
+		t.Fatalf("persistent flags leaked after run: city=%q rig=%q", cityFlag, rigFlag)
+	}
+}
+
 func mustLoadTestSiteBinding(t *testing.T, fs fsys.FS, cityPath string) *config.SiteBinding {
 	t.Helper()
 	binding, err := config.LoadSiteBinding(fs, cityPath)

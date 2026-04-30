@@ -170,6 +170,18 @@ is_retryable_error() {
     return 1
 }
 
+sleep_ms() {
+    local ms="$1"
+    local seconds remainder
+    seconds=$((ms / 1000))
+    remainder=$((ms % 1000))
+    if [ "$remainder" -eq 0 ]; then
+        sleep "$seconds"
+    else
+        sleep "$seconds.$(printf '%03d' "$remainder")"
+    fi
+}
+
 # server_sql_retry wraps server_sql with exponential backoff on transient errors.
 # 5 attempts, backoff 500ms→1s→2s→4s→8s (capped at 15s).
 server_sql_retry() {
@@ -189,7 +201,7 @@ server_sql_retry() {
         fi
 
         if [ "$attempt" -lt "$max_attempts" ]; then
-            sleep "$(awk "BEGIN{printf \"%.3f\", $backoff_ms/1000}")" 2>/dev/null || sleep 1
+            sleep_ms "$backoff_ms" 2>/dev/null || sleep 1
             backoff_ms=$((backoff_ms * 2))
             if [ "$backoff_ms" -gt "$max_backoff_ms" ]; then
                 backoff_ms=$max_backoff_ms
@@ -239,7 +251,7 @@ ensure_database_registered() {
         if server_sql "USE \`$db\`" >/dev/null 2>&1; then
             return 0
         fi
-        sleep "$(awk "BEGIN{printf \"%.3f\", $backoff_ms/1000}")" 2>/dev/null || sleep 1
+        sleep_ms "$backoff_ms" 2>/dev/null || sleep 1
         backoff_ms=$((backoff_ms * 2))
     done
 

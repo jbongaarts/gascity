@@ -88,3 +88,23 @@ func TestGCBeadsBDScript_RespectsEmptyUserValue(t *testing.T) {
 		t.Fatalf("gc-beads-bd.sh must not clobber an explicitly empty DOLT_GC_SCHEDULER")
 	}
 }
+
+func TestGCBeadsBDScript_UsesPortableSleepMS(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed")
+	}
+	scriptPath := filepath.Join(filepath.Dir(thisFile), "..", "..", "examples", "bd", "assets", "scripts", "gc-beads-bd.sh")
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", scriptPath, err)
+	}
+	script := string(data)
+
+	if !strings.Contains(script, "sleep_ms()") {
+		t.Fatalf("gc-beads-bd.sh must define portable sleep_ms helper")
+	}
+	if strings.Contains(script, "awk \"BEGIN") {
+		t.Fatalf("gc-beads-bd.sh must not use awk for millisecond sleep math")
+	}
+}
