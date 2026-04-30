@@ -28,14 +28,19 @@ func trackingBeads(t *testing.T, store beads.Store, label string) []beads.Bead {
 
 func workBeadByOrderLabel(t *testing.T, store beads.Store, label string) beads.Bead {
 	t.Helper()
-	all := trackingBeads(t, store, label)
-	for _, b := range all {
-		if !strings.HasPrefix(b.Title, "order:") {
-			return b
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		all := trackingBeads(t, store, label)
+		for _, b := range all {
+			if !strings.HasPrefix(b.Title, "order:") {
+				return b
+			}
 		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no non-tracking bead found for %q", label)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("no non-tracking bead found for %q", label)
-	return beads.Bead{}
 }
 
 type selectiveUpdateFailStore struct {
@@ -2495,6 +2500,7 @@ func TestQualifyPool(t *testing.T) {
 
 func TestBuildOrderDispatcherUsesProviderAwareFileStore(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_BEADS_SCOPE_ROOT", "")
 
 	cityDir := t.TempDir()
 	layerDir := filepath.Join(cityDir, "formulas")
@@ -2541,6 +2547,7 @@ pool = "worker"
 
 func TestBuildOrderDispatcherRigOrderUsesRigFileStore(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_BEADS_SCOPE_ROOT", "")
 
 	cityDir := t.TempDir()
 	rigDir := filepath.Join(cityDir, "frontend")
@@ -2618,6 +2625,7 @@ pool = "worker"
 
 func TestBuildOrderDispatcherRigOrderHonorsLegacyCityRunHistory(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_BEADS_SCOPE_ROOT", "")
 
 	cityDir := t.TempDir()
 	rigDir := filepath.Join(cityDir, "frontend")
@@ -2921,6 +2929,7 @@ func TestOrderDispatchSkipsRigCooldownWhenLegacyLastRunReadFails(t *testing.T) {
 
 func TestBuildOrderDispatcherReopensStoreForScopedFileReads(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_BEADS_SCOPE_ROOT", "")
 
 	cityDir := t.TempDir()
 	layerDir := filepath.Join(cityDir, "formulas")
