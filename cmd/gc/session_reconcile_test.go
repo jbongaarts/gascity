@@ -24,6 +24,7 @@ type testStore struct {
 	metadata             map[string]map[string]string // id -> key -> value
 	metadataBatchCalls   int
 	metadataBatchPatches []map[string]string
+	metadataBatchErr     error
 }
 
 func newTestStore() *testStore {
@@ -45,6 +46,9 @@ func (s *testStore) SetMetadataBatch(id string, kvs map[string]string) error {
 		patch[k] = v
 	}
 	s.metadataBatchPatches = append(s.metadataBatchPatches, patch)
+	if s.metadataBatchErr != nil {
+		return s.metadataBatchErr
+	}
 	for k, v := range kvs {
 		if err := s.SetMetadata(id, k, v); err != nil {
 			return err
@@ -936,7 +940,7 @@ func TestCheckStability_PendingCreateInFlightNotCounted(t *testing.T) {
 		"wake_attempts":        "0",
 	})
 
-	if checkStability(&session, nil, false, dt, store, clk) {
+	if checkStability(&session, nil, false, dt, store, clk, nil) {
 		t.Fatal("in-flight pending create should not be counted as a rapid exit")
 	}
 	if got := session.Metadata["wake_attempts"]; got != "0" {

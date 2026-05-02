@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -22,8 +23,8 @@ import (
 //
 // Fix: extend checkStability to accept a peek callback (matching the shape
 // already used by AcceptStartupDialogs* in internal/runtime/dialog.go). When
-// peek returns content matching runtime.ContainsRateLimitDialog, the function
-// records a rate-limit quarantine (longer back-off, distinct
+// peek returns high-confidence provider rate-limit screen content, the
+// function records a rate-limit quarantine (longer back-off, distinct
 // sleep_reason="rate_limit") instead of a crash, and does NOT increment
 // wake_attempts.
 func TestCheckStability_RateLimitScreen_DoesNotCountAsCrash(t *testing.T) {
@@ -104,7 +105,11 @@ func TestCheckRateLimitStability_BeforeHealPreservesResumeMetadata(t *testing.T)
 		return "You've hit your limit, Pro plan\n\n/rate-limit-options", nil
 	}
 
-	if !checkRateLimitStability(&session, nil, false, dt, store, clk, peek) {
+	handled, err := checkRateLimitStability(&session, nil, false, dt, store, clk, peek)
+	if err != nil {
+		t.Fatalf("recording rate-limit rapid exit: %v", err)
+	}
+	if !handled {
 		t.Fatal("rate-limit rapid exit should be recorded before advisory state healing")
 	}
 
@@ -121,6 +126,122 @@ func TestCheckRateLimitStability_BeforeHealPreservesResumeMetadata(t *testing.T)
 	}
 	if got := session.Metadata["state"]; got != "asleep" {
 		t.Errorf("state = %q, want asleep", got)
+	}
+	if got := session.Metadata["sleep_reason"]; got != "rate_limit" {
+		t.Errorf("sleep_reason = %q, want rate_limit", got)
+	}
+}
+
+func TestCheckRateLimitStability_BatchFailureDoesNotClearLastWokeAt(t *testing.T) {
+	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+	store := newTestStore()
+	store.metadataBatchErr = errors.New("batch failed")
+	dt := newDrainTracker()
+	lastWoke := now.Add(-10 * time.Second).Format(time.RFC3339)
+
+	session := makeBead("b1", map[string]string{
+		"state":               "active",
+		"last_woke_at":        lastWoke,
+		"session_key":         "keep-session",
+		"started_config_hash": "keep-hash",
+	})
+	peek := func(_ int) (string, error) {
+		return "You've hit your limit, Pro plan\n\n/rate-limit-options", nil
+	}
+
+	handled, err := checkRateLimitStability(&session, nil, false, dt, store, clk, peek)
+	if err == nil {
+		t.Fatal("rate-limit batch failure should be returned")
+	}
+	if handled {
+		t.Fatal("rate-limit rapid exit should not be handled when persistence fails")
+	}
+	if got := session.Metadata["last_woke_at"]; got != lastWoke {
+		t.Fatalf("last_woke_at = %q, want preserved after failed batch", got)
+	}
+	if got := session.Metadata["sleep_reason"]; got != "" {
+		t.Fatalf("sleep_reason = %q, want unchanged after failed batch", got)
+	}
+	if got, ok := store.metadata["b1"]["last_woke_at"]; ok {
+		t.Fatalf("separate last_woke_at write = %q, want no standalone clear", got)
+	}
+	if len(store.metadataBatchPatches) != 1 {
+		t.Fatalf("metadata batch calls = %d, want 1", len(store.metadataBatchPatches))
+	}
+	if got, ok := store.metadataBatchPatches[0]["last_woke_at"]; !ok || got != "" {
+		t.Fatalf("rate-limit batch last_woke_at = %q, present=%v; want empty value in batch", got, ok)
+	}
+
+	store.metadataBatchErr = nil
+	handled, err = checkRateLimitStability(&session, nil, false, dt, store, clk, peek)
+	if err != nil {
+		t.Fatalf("retrying rate-limit detection: %v", err)
+	}
+	if !handled {
+		t.Fatal("rate-limit detection should retry on the next tick after a failed batch")
+	}
+	healState(&session, false, store, clk)
+
+	if got := session.Metadata["session_key"]; got != "keep-session" {
+		t.Errorf("session_key = %q, want preserved", got)
+	}
+	if got := session.Metadata["started_config_hash"]; got != "keep-hash" {
+		t.Errorf("started_config_hash = %q, want preserved", got)
+	}
+	if got := session.Metadata["continuation_reset_pending"]; got != "" {
+		t.Errorf("continuation_reset_pending = %q, want empty", got)
+	}
+	if got := session.Metadata["last_woke_at"]; got != "" {
+		t.Errorf("last_woke_at = %q, want cleared by successful quarantine batch", got)
+	}
+}
+
+func TestCheckRateLimitStability_BatchFailureRetriesAfterStabilityThreshold(t *testing.T) {
+	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+	store := newTestStore()
+	store.metadataBatchErr = errors.New("batch failed")
+	dt := newDrainTracker()
+	lastWoke := now.Add(-10 * time.Second).Format(time.RFC3339)
+
+	session := makeBead("b1", map[string]string{
+		"state":               "active",
+		"last_woke_at":        lastWoke,
+		"session_key":         "keep-session",
+		"started_config_hash": "keep-hash",
+	})
+	peek := func(_ int) (string, error) {
+		return "You've hit your limit, Pro plan\n\n/rate-limit-options", nil
+	}
+
+	handled, err := checkRateLimitStability(&session, nil, false, dt, store, clk, peek)
+	if err == nil {
+		t.Fatal("initial failed batch should be returned")
+	}
+	if handled {
+		t.Fatal("initial failed batch should not be reported as handled")
+	}
+
+	clk.Time = now.Add(stabilityThreshold + time.Second)
+	store.metadataBatchErr = nil
+	handled, err = checkRateLimitStability(&session, nil, false, dt, store, clk, peek)
+	if err != nil {
+		t.Fatalf("retrying after stability threshold: %v", err)
+	}
+	if !handled {
+		t.Fatal("rate-limit detection should retry after the crash stability threshold")
+	}
+	healState(&session, false, store, clk)
+
+	if got := session.Metadata["session_key"]; got != "keep-session" {
+		t.Errorf("session_key = %q, want preserved", got)
+	}
+	if got := session.Metadata["started_config_hash"]; got != "keep-hash" {
+		t.Errorf("started_config_hash = %q, want preserved", got)
+	}
+	if got := session.Metadata["continuation_reset_pending"]; got != "" {
+		t.Errorf("continuation_reset_pending = %q, want empty", got)
 	}
 	if got := session.Metadata["sleep_reason"]; got != "rate_limit" {
 		t.Errorf("sleep_reason = %q, want rate_limit", got)
@@ -169,6 +290,29 @@ func TestCheckStability_RateLimitScreen_NilPeekFallsBackToCrash(t *testing.T) {
 
 	if !checkStability(&session, nil, false, dt, store, clk, nil) {
 		t.Error("rapid exit with nil peek should fall back to crash-counting behavior")
+	}
+	if got := session.Metadata["wake_attempts"]; got != "1" {
+		t.Errorf("wake_attempts = %q, want 1", got)
+	}
+}
+
+func TestCheckStability_RateLimitScreen_PeekErrorFallsBackToCrash(t *testing.T) {
+	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+	store := newTestStore()
+	dt := newDrainTracker()
+
+	session := makeBead("b1", map[string]string{
+		"last_woke_at":  now.Add(-10 * time.Second).Format(time.RFC3339),
+		"wake_attempts": "0",
+	})
+
+	peek := func(_ int) (string, error) {
+		return "", errors.New("peek failed")
+	}
+
+	if !checkStability(&session, nil, false, dt, store, clk, peek) {
+		t.Error("rapid exit with peek error should fall back to crash-counting behavior")
 	}
 	if got := session.Metadata["wake_attempts"]; got != "1" {
 		t.Errorf("wake_attempts = %q, want 1", got)
