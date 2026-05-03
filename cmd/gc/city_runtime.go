@@ -956,12 +956,6 @@ func (cr *CityRuntime) reloadConfigTraced(
 		}
 	}
 
-	// System formulas/orders now arrive via the core bootstrap pack.
-	// gc-beads-bd ships inside the bd pack's assets/scripts/ and is
-	// materialized alongside the rest of the pack content.
-	if err := MaterializeBuiltinPacks(cityRoot); err != nil {
-		appendWarning(fmt.Sprintf("config reload: materializing builtin packs: %v", err))
-	}
 	if err := config.ValidateRigs(nextCfg.Rigs, config.EffectiveHQPrefix(nextCfg)); err != nil {
 		appendWarning(fmt.Sprintf("config reload: %v", err))
 	}
