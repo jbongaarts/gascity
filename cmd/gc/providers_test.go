@@ -698,6 +698,28 @@ func TestLoadProviderSessionSnapshotLoadsStoreWithoutACPAgents(t *testing.T) {
 	}
 }
 
+func TestStatusSessionProviderSkipsSessionSnapshot(t *testing.T) {
+	oldOpen := openSessionProviderStore
+	t.Cleanup(func() { openSessionProviderStore = oldOpen })
+
+	calls := 0
+	openSessionProviderStore = func(string) (beads.Store, error) {
+		calls++
+		return nil, errors.New("session snapshot should not load for status")
+	}
+
+	sp := newStatusSessionProviderForCity(&config.City{
+		Workspace: config.Workspace{Name: "city"},
+		Session:   config.SessionConfig{Provider: "subprocess"},
+	}, "/tmp/city")
+	if sp == nil {
+		t.Fatal("newStatusSessionProviderForCity() = nil")
+	}
+	if calls != 0 {
+		t.Fatalf("openSessionProviderStore called %d times, want 0", calls)
+	}
+}
+
 func TestLoadProviderSessionSnapshotLoadsOpenACPAgents(t *testing.T) {
 	oldOpen := openSessionProviderStore
 	t.Cleanup(func() { openSessionProviderStore = oldOpen })

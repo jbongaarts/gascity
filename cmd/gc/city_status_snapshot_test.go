@@ -94,6 +94,35 @@ func (s *failingStatusStore) Get(id string) (beads.Bead, error) {
 	return s.MemStore.Get(id)
 }
 
+type getSpyStatusStore struct {
+	*beads.MemStore
+	ids []string
+}
+
+func (s *getSpyStatusStore) Get(id string) (beads.Bead, error) {
+	s.ids = append(s.ids, id)
+	return s.MemStore.Get(id)
+}
+
+func TestCityStatusAgentObservationDoesNotResolveRuntimeNamesThroughStore(t *testing.T) {
+	sp := runtime.NewFake()
+	store := &getSpyStatusStore{MemStore: beads.NewMemStore()}
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "city"},
+		Agents: []config.Agent{
+			{Name: "dog", MaxActiveSessions: intPtr(2)},
+		},
+	}
+
+	snapshot := collectCityStatusSnapshot(sp, cfg, "/home/user/city", store, io.Discard)
+	if len(snapshot.Agents) != 2 {
+		t.Fatalf("agents = %d, want 2", len(snapshot.Agents))
+	}
+	if len(store.ids) != 0 {
+		t.Fatalf("status observation performed bead Get calls for runtime names: %v", store.ids)
+	}
+}
+
 func TestCityStatusNamedSessionLookupErrorsAreSurfaced(t *testing.T) {
 	sp := runtime.NewFake()
 	dops := newFakeDrainOps()

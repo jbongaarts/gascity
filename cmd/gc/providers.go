@@ -164,6 +164,11 @@ func newSessionProviderForCity(cfg *config.City, cityPath string) runtime.Provid
 	return newSessionProviderFromContext(ctx, sessionBeads)
 }
 
+func newStatusSessionProviderForCity(cfg *config.City, cityPath string) runtime.Provider {
+	ctx := sessionProviderContextForCity(cfg, cityPath, os.Getenv("GC_SESSION"))
+	return newSessionProviderFromContext(ctx, nil)
+}
+
 func loadProviderSessionSnapshot(ctx sessionProviderContext) *sessionBeadSnapshot {
 	if ctx.cityPath == "" || ctx.providerName == "acp" {
 		return nil
