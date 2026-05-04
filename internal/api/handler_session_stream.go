@@ -364,12 +364,12 @@ func (s *Server) streamSessionTranscriptHistoryRaw(ctx context.Context, w http.R
 		return emitted
 	}
 
-	_ = emitSnapshot(initial)
 	if logPath != "" {
 		poll.Stop()
 		keepalive.Stop()
 		lw = newLogFileWatcher(logPath)
 		defer lw.Close()
+		_ = emitSnapshot(initial)
 		lw.Run(ctx, reloadSnapshot, func() { writeSSEComment(w) }, RunOpts{
 			OnStall:      func() { _ = emitPending() },
 			StallTimeout: sessionStreamPendingStallTimeout,
@@ -378,6 +378,7 @@ func (s *Server) streamSessionTranscriptHistoryRaw(ctx context.Context, w http.R
 		return
 	}
 
+	_ = emitSnapshot(initial)
 	for {
 		select {
 		case <-ctx.Done():
@@ -486,16 +487,17 @@ func (s *Server) streamSessionTranscriptHistory(ctx context.Context, w http.Resp
 		return emitted
 	}
 
-	_ = emitSnapshot(initial)
 	if logPath != "" {
 		poll.Stop()
 		keepalive.Stop()
 		lw = newLogFileWatcher(logPath)
 		defer lw.Close()
+		_ = emitSnapshot(initial)
 		lw.Run(ctx, reloadSnapshot, func() { writeSSEComment(w) }, RunOpts{Wake: workerOps})
 		return
 	}
 
+	_ = emitSnapshot(initial)
 	for {
 		select {
 		case <-ctx.Done():
@@ -781,12 +783,12 @@ func (s *Server) streamSessionTranscriptLogRawHuma(ctx context.Context, send sse
 		return emitted
 	}
 
-	_ = emitSnapshot(initial)
 	if logPath != "" {
 		poll.Stop()
 		keepalive.Stop()
 		lw = newLogFileWatcher(logPath)
 		defer lw.Close()
+		_ = emitSnapshot(initial)
 		lw.Run(ctx, reloadSnapshot, func() {
 			_ = send.Data(HeartbeatEvent{Timestamp: time.Now().UTC().Format(time.RFC3339)})
 		}, RunOpts{
@@ -797,6 +799,7 @@ func (s *Server) streamSessionTranscriptLogRawHuma(ctx context.Context, send sse
 		return
 	}
 
+	_ = emitSnapshot(initial)
 	for {
 		select {
 		case <-ctx.Done():
@@ -907,18 +910,19 @@ func (s *Server) streamSessionTranscriptLogHuma(ctx context.Context, send sse.Se
 		return emitted
 	}
 
-	_ = emitSnapshot(initial)
 	if logPath != "" {
 		poll.Stop()
 		keepalive.Stop()
 		lw = newLogFileWatcher(logPath)
 		defer lw.Close()
+		_ = emitSnapshot(initial)
 		lw.Run(ctx, reloadSnapshot, func() {
 			_ = send.Data(HeartbeatEvent{Timestamp: time.Now().UTC().Format(time.RFC3339)})
 		}, RunOpts{Wake: workerOps})
 		return
 	}
 
+	_ = emitSnapshot(initial)
 	for {
 		select {
 		case <-ctx.Done():
