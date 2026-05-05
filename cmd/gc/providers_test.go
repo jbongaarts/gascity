@@ -720,6 +720,40 @@ func TestStatusSessionProviderSkipsSessionSnapshot(t *testing.T) {
 	}
 }
 
+func TestStatusSessionProviderUsesProvidedSnapshotToWrapObservedACPSessions(t *testing.T) {
+	oldBuild := buildSessionProviderByName
+	t.Cleanup(func() { buildSessionProviderByName = oldBuild })
+
+	defaultSP := runtime.NewFake()
+	acpSP := runtime.NewFake()
+	buildSessionProviderByName = func(name string, sc config.SessionConfig, cityName, cityPath string) (runtime.Provider, error) {
+		if name == "acp" {
+			return acpSP, nil
+		}
+		return defaultSP, nil
+	}
+
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "city"},
+		Session:   config.SessionConfig{Provider: "fake"},
+		Agents:    []config.Agent{{Name: "mayor"}},
+	}
+	snapshot := newSessionBeadSnapshot([]beads.Bead{{
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"template":     "orphan-acp",
+			"transport":    "acp",
+			"session_name": "provider-session",
+		},
+	}})
+
+	sp := newStatusSessionProviderForCityWithSnapshot(cfg, t.TempDir(), snapshot)
+	if err := sp.Attach("provider-session"); err == nil || !strings.Contains(err.Error(), "ACP transport") {
+		t.Fatalf("Attach(provider-session) error = %v, want ACP transport error from snapshot-backed wrapper", err)
+	}
+}
+
 func TestLoadProviderSessionSnapshotLoadsOpenACPAgents(t *testing.T) {
 	oldOpen := openSessionProviderStore
 	t.Cleanup(func() { openSessionProviderStore = oldOpen })

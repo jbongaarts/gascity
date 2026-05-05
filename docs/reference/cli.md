@@ -150,6 +150,10 @@ in the arguments.
 
 All arguments after "gc bd" are forwarded to bd unchanged.
 
+gc bd forces BD_EXPORT_AUTO=false to prevent bd's git auto-export hook
+from wedging the wrapper after printing command output. If you need
+auto-export behavior, invoke bd directly.
+
 ```
 gc bd [bd-args...]
 ```

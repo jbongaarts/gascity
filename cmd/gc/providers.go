@@ -169,6 +169,21 @@ func newStatusSessionProviderForCity(cfg *config.City, cityPath string) runtime.
 	return newSessionProviderFromContext(ctx, nil)
 }
 
+func newStatusSessionProviderForCityWithSnapshot(cfg *config.City, cityPath string, sessionBeads *sessionBeadSnapshot) runtime.Provider {
+	ctx := sessionProviderContextForCity(cfg, cityPath, os.Getenv("GC_SESSION"))
+	return newSessionProviderFromContext(ctx, sessionBeads)
+}
+
+func registerStatusProviderACPRoutes(sp runtime.Provider, snapshot *sessionBeadSnapshot, cityName string, cfg *config.City) {
+	router, ok := sp.(interface{ RouteACP(string) })
+	if !ok {
+		return
+	}
+	for _, sessName := range configuredACPRouteNames(snapshot, cityName, cfg) {
+		router.RouteACP(sessName)
+	}
+}
+
 func loadProviderSessionSnapshot(ctx sessionProviderContext) *sessionBeadSnapshot {
 	if ctx.cityPath == "" || ctx.providerName == "acp" {
 		return nil
