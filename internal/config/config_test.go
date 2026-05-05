@@ -1645,8 +1645,11 @@ func TestEffectiveScaleCheckUsesReadyOnly(t *testing.T) {
 		t.Errorf("EffectiveScaleCheck = %q, should not count in-progress work as new demand", check)
 	}
 
-	if !strings.Contains(check, "${ready:-0}") {
-		t.Errorf("missing ${ready:-0} in arithmetic sum")
+	if !strings.Contains(check, "--limit 0") {
+		t.Errorf("missing --limit 0 for complete ready count")
+	}
+	if strings.Contains(check, "2>/dev/null") || strings.Contains(check, "${ready:-0}") || strings.Contains(check, "|| echo 0") {
+		t.Errorf("default scale_check masks bd ready failures as zero: %q", check)
 	}
 	if strings.Contains(check, "${molecules:-0}") {
 		t.Errorf("unexpected ${molecules:-0} in arithmetic sum")

@@ -43,11 +43,11 @@ type DesiredStateResult struct {
 	// direct assignee demand (Assignee == identity). The reconciler merges this
 	// into poolDesired so that on-demand named sessions remain config-eligible.
 	NamedSessionDemand map[string]bool
-	// StoreQueryPartial is true when one or more bead store queries failed
-	// during assigned-work snapshot collection. When set, the reconciler must NOT
-	// drain sessions based on the (incomplete) desired state — a transient
-	// store failure would cause running sessions to be falsely orphaned
-	// and interrupted via Ctrl-C.
+	// StoreQueryPartial is true when one or more bead store queries or
+	// bead-backed scale checks failed. When set, the reconciler must NOT drain
+	// sessions based on the incomplete desired state — a transient failure
+	// would cause running sessions to be falsely orphaned and interrupted via
+	// Ctrl-C.
 	StoreQueryPartial bool
 	// SessionQueryPartial is true when session-bead snapshot loading failed.
 	// Orphan-release and drain decisions must treat this like an incomplete
@@ -81,7 +81,7 @@ func evaluatePendingPools(
 	pendingPools []poolEvalWork,
 	stderr io.Writer,
 	trace *sessionReconcilerTraceCycle,
-) []int {
+) ([]int, bool) {
 	type poolEvalResult struct {
 		desired int
 		err     error
@@ -135,9 +135,11 @@ func evaluatePendingPools(
 	wg.Wait()
 
 	counts := make([]int, len(pendingPools))
+	partial := false
 	for j, pw := range pendingPools {
 		pr := evalResults[j]
 		if pr.err != nil {
+			partial = true
 			if pw.newDemand {
 				fmt.Fprintf(stderr, "buildDesiredState: %v (using new demand=0)\n", pr.err) //nolint:errcheck
 			} else {
@@ -146,7 +148,7 @@ func evaluatePendingPools(
 		}
 		counts[j] = pr.desired
 	}
-	return counts
+	return counts, partial
 }
 
 // evaluatePendingPoolsMap is like evaluatePendingPools but returns a map from
@@ -158,13 +160,13 @@ func evaluatePendingPoolsMap(
 	pendingPools []poolEvalWork,
 	stderr io.Writer,
 	trace *sessionReconcilerTraceCycle,
-) map[string]int {
-	counts := evaluatePendingPools(cfg, pendingPools, stderr, trace)
+) (map[string]int, bool) {
+	counts, partial := evaluatePendingPools(cfg, pendingPools, stderr, trace)
 	m := make(map[string]int, len(counts))
 	for j, pw := range pendingPools {
 		m[cfg.Agents[pw.agentIdx].QualifiedName()] = counts[j]
 	}
-	return m
+	return m, partial
 }
 
 // buildDesiredState computes the desired session state from config,
@@ -294,6 +296,7 @@ func buildDesiredStateWithSessionBeads(
 	var assignedWorkStoreRefs []string
 	var storePartial bool
 	var scaleCheckCounts map[string]int
+	var scaleCheckPartial bool
 	var namedDefaultDemand map[string]bool
 	if store != nil {
 		assignedWorkBeads, assignedWorkStores, assignedWorkStoreRefs, storePartial = collectAssignedWorkBeadsWithStores(cfg, store, rigStores, suspendedRigPaths, sessionBeads)
@@ -308,11 +311,14 @@ func buildDesiredStateWithSessionBeads(
 		} else {
 			fmt.Fprintf(stderr, "assignedWorkBeads: 0 beads (rigStores=%d)\n", len(rigStores)) //nolint:errcheck
 		}
-		scaleCheckCounts = evaluatePendingPoolsMap(cfg, pendingPools, stderr, trace)
+		scaleCheckCounts, scaleCheckPartial = evaluatePendingPoolsMap(cfg, pendingPools, stderr, trace)
 		if len(defaultScaleTargets) > 0 {
 			defaultCounts, errs := defaultScaleCheckCounts(defaultScaleTargets)
 			for _, err := range errs {
 				fmt.Fprintf(stderr, "buildDesiredState: %v (using new demand=0)\n", err) //nolint:errcheck
+			}
+			if len(errs) > 0 {
+				scaleCheckPartial = true
 			}
 			for template, count := range defaultCounts {
 				scaleCheckCounts[template] = count
@@ -324,6 +330,13 @@ func buildDesiredStateWithSessionBeads(
 			for _, err := range namedErrs {
 				fmt.Fprintf(stderr, "buildDesiredState: %v (using named demand=false)\n", err) //nolint:errcheck
 			}
+			if len(namedErrs) > 0 {
+				scaleCheckPartial = true
+			}
+		}
+		if scaleCheckPartial {
+			storePartial = true
+			fmt.Fprintf(stderr, "scaleCheck: PARTIAL — scale_check failed, drain decisions suppressed\n") //nolint:errcheck
 		}
 		poolWorkBeads := filterAssignedWorkBeadsForPoolDemand(cfg, cityPath, sessionBeads.Open(), assignedWorkBeads, assignedWorkStoreRefs)
 		poolDesiredStates := ComputePoolDesiredStatesTraced(cfg, poolWorkBeads, sessionBeads.Open(), scaleCheckCounts, trace)
@@ -340,7 +353,7 @@ func buildDesiredStateWithSessionBeads(
 		}
 	} else {
 		// No store — use scale_check counts directly.
-		scaleCheckCounts = evaluatePendingPoolsMap(cfg, pendingPools, stderr, trace)
+		scaleCheckCounts, _ = evaluatePendingPoolsMap(cfg, pendingPools, stderr, trace)
 		for _, pw := range pendingPools {
 			desiredCount := scaleCheckCounts[cfg.Agents[pw.agentIdx].QualifiedName()]
 			for slot := 1; slot <= desiredCount; slot++ {

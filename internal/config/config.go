@@ -2111,9 +2111,8 @@ func (a *Agent) EffectiveScaleCheck() string {
 		return a.ScaleCheck
 	}
 	template := a.QualifiedName()
-	return `ready=$(bd ready --metadata-field gc.routed_to=` + template +
-		` --unassigned --json 2>/dev/null | jq 'length' 2>/dev/null); ` +
-		`echo "${ready:-0}" || echo 0`
+	return `ready_json=$(bd ready --metadata-field gc.routed_to=` + template +
+		` --unassigned --limit 0 --json) && printf '%s\n' "$ready_json" | jq 'length'`
 }
 
 // EffectiveMaxActiveSessions returns the agent's max active sessions.

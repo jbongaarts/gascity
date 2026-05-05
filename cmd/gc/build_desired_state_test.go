@@ -2792,6 +2792,30 @@ func TestBuildDesiredState_ManualImplicitPoolSessionsStayDesired(t *testing.T) {
 	}
 }
 
+func TestBuildDesiredState_ScaleCheckErrorMarksStoreQueryPartial(t *testing.T) {
+	cityPath := t.TempDir()
+	store := beads.NewMemStore()
+	cfg := &config.City{
+		Agents: []config.Agent{{
+			Name:              "worker",
+			StartCommand:      "echo",
+			ScaleCheck:        "exit 42",
+			MinActiveSessions: intPtr(0),
+			MaxActiveSessions: intPtr(3),
+		}},
+	}
+
+	var stderr strings.Builder
+	result := buildDesiredStateWithSessionBeads("test-city", cityPath, time.Now().UTC(), cfg, runtime.NewFake(), store, nil, nil, nil, &stderr)
+
+	if !result.StoreQueryPartial {
+		t.Fatalf("StoreQueryPartial = false, want true when bead-backed scale_check fails; stderr=%s", stderr.String())
+	}
+	if got := result.ScaleCheckCounts["worker"]; got != 0 {
+		t.Fatalf("ScaleCheckCounts[worker] = %d, want 0 on failed new-demand probe", got)
+	}
+}
+
 func TestBuildDesiredState_DrainedPoolManagedSessionIsNotRediscovered(t *testing.T) {
 	cityPath := t.TempDir()
 	store := beads.NewMemStore()
