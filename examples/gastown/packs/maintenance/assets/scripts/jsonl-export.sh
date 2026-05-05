@@ -153,8 +153,15 @@ archive_has_local_only_commits_from_tracking() {
 }
 
 archive_has_local_only_commits() {
-    refresh_archive_remote_main >/dev/null 2>&1 || return 1
-    archive_has_local_only_commits_from_tracking
+    if refresh_archive_remote_main >/dev/null 2>&1; then
+        archive_has_local_only_commits_from_tracking
+        return
+    fi
+    if archive_has_local_only_commits_from_tracking; then
+        echo "jsonl-export: fetch failed while checking deferred archive push; using existing origin/main tracking ref" >&2
+        return 0
+    fi
+    return 1
 }
 
 set_pending_spike_alert() {
@@ -390,6 +397,18 @@ DATABASES=$(dolt_sql -r csv -q "SHOW DATABASES" 2>/dev/null | tail -n +2 \
     | grep -vi '^information_schema$\|^mysql$\|^dolt_cluster$\|^performance_schema$\|^sys$\|^__gc_probe$\|^benchdb$\|^testdb_\|^beads_pt\|^beads_vr\|^doctest_\|^doctortest_' \
     | grep -v '^beads_t[0-9a-f]\{8,\}$' || true)
 if [ -z "$DATABASES" ]; then
+    if [ -d "$ARCHIVE_REPO/.git" ]; then
+        cd "$ARCHIVE_REPO"
+        if has_pending_archive_push || archive_has_local_only_commits; then
+            PUSH_STATUS="ok"
+            if ! push_archive_main; then
+                PUSH_STATUS="failed"
+            fi
+            SUMMARY="jsonl — no user databases, push: $PUSH_STATUS"
+            gc session nudge deacon/ "DOG_DONE: $SUMMARY" 2>/dev/null || true
+            echo "jsonl-export: $SUMMARY"
+        fi
+    fi
     exit 0
 fi
 
