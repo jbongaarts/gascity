@@ -995,6 +995,58 @@ func TestProcessRalphControlReturnsPendingForOpenIteration(t *testing.T) {
 	}
 }
 
+func TestProcessRalphControlPendingIterationAddsBlockingDep(t *testing.T) {
+	t.Parallel()
+	store := beads.NewMemStore()
+
+	root := mustCreate(t, store, beads.Bead{
+		Title:    "workflow",
+		Metadata: map[string]string{"gc.kind": "workflow"},
+	})
+	control := mustCreate(t, store, beads.Bead{
+		Title: "review loop",
+		Metadata: map[string]string{
+			"gc.kind":         "ralph",
+			"gc.root_bead_id": root.ID,
+			"gc.step_ref":     "mol-test.review-loop",
+			"gc.step_id":      "review-loop",
+			"gc.max_attempts": "2",
+		},
+	})
+	iteration := mustCreate(t, store, beads.Bead{
+		Title: "review loop iteration 1",
+		Metadata: map[string]string{
+			"gc.kind":         "scope",
+			"gc.root_bead_id": root.ID,
+			"gc.step_ref":     "mol-test.review-loop.iteration.1",
+			"gc.scope_role":   "body",
+			"gc.attempt":      "1",
+		},
+	})
+
+	_, err := processRalphControl(store, mustGet(t, store, control.ID), ProcessOptions{})
+	if !errors.Is(err, ErrControlPending) {
+		t.Fatalf("error = %v, want %v", err, ErrControlPending)
+	}
+
+	deps, err := store.DepList(control.ID, "down")
+	if err != nil {
+		t.Fatalf("DepList: %v", err)
+	}
+	if len(deps) != 1 || deps[0].DependsOnID != iteration.ID || deps[0].Type != "blocks" {
+		t.Fatalf("deps = %#v, want one blocks dep on pending iteration %s", deps, iteration.ID)
+	}
+	ready, err := store.Ready()
+	if err != nil {
+		t.Fatalf("Ready: %v", err)
+	}
+	for _, bead := range ready {
+		if bead.ID == control.ID {
+			t.Fatalf("control bead stayed ready while pending iteration %s is open", iteration.ID)
+		}
+	}
+}
+
 // TestReconcileClosedScopeMemberRalphPass covers the pass-side symmetry of
 // TestProcessRalphControlClosesEnclosingScopeOnIterationFailure: when a scoped
 // ralph control closes with gc.outcome=pass, reconcileClosedScopeMember must
