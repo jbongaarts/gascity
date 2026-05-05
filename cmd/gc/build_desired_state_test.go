@@ -3324,10 +3324,36 @@ func TestBuildDesiredState_PendingCreatePoolSessionCountsTowardScaleDemand(t *te
 			MaxActiveSessions: intPtr(5),
 		}},
 	}
+	sessionSnapshot, err := loadSessionBeadSnapshot(store)
+	if err != nil {
+		t.Fatalf("load session snapshot: %v", err)
+	}
 
-	dsResult := buildDesiredState("test-city", cityPath, time.Now().UTC(), cfg, runtime.NewFake(), store, io.Discard)
+	trace := newPoolDesiredStateTestTrace(template)
+	var stderr strings.Builder
+	dsResult := buildDesiredStateWithSessionBeads(
+		"test-city", cityPath, time.Now().UTC(), cfg, runtime.NewFake(),
+		store, nil, sessionSnapshot, trace, &stderr,
+	)
 	if got := dsResult.ScaleCheckCounts[template]; got != 2 {
 		t.Fatalf("ScaleCheckCounts[%s] = %d, want 2", template, got)
+	}
+	// The trace pins the buildDesiredState integration point: the pending
+	// create consumes one scale-demand slot before anonymous new requests are
+	// materialized.
+	if got := trace.decisionCounts[string(TraceSitePoolInFlightReuse)]; got != 1 {
+		t.Fatalf("in-flight reuse trace decisions = %d, want 1; stderr:\n%s", got, stderr.String())
+	}
+	rec := poolTraceDecision(t, trace, TraceSitePoolInFlightReuse)
+	for key, want := range map[string]int{
+		"scale_check":   2,
+		"in_flight":     1,
+		"reused":        1,
+		"anonymous_new": 1,
+	} {
+		if got := poolTraceFieldInt(t, rec.Fields, key); got != want {
+			t.Fatalf("%s = %d, want %d", key, got, want)
+		}
 	}
 
 	var templateCount int
@@ -3343,11 +3369,25 @@ func TestBuildDesiredState_PendingCreatePoolSessionCountsTowardScaleDemand(t *te
 	if templateCount != 2 {
 		t.Fatalf("desired %s sessions = %d, want 2; keys=%v", template, templateCount, mapKeys(dsResult.State))
 	}
+	var anonymousNew *TemplateParams
+	for name, tp := range dsResult.State {
+		if tp.TemplateName == template && name != sessionName {
+			tpCopy := tp
+			anonymousNew = &tpCopy
+			break
+		}
+	}
+	if anonymousNew == nil {
+		t.Fatalf("desired state missing anonymous new pool session: keys=%v", mapKeys(dsResult.State))
+	}
 	if existing.InstanceName != "worker-1" {
 		t.Fatalf("existing InstanceName = %q, want worker-1", existing.InstanceName)
 	}
 	if existing.PoolSlot != 1 {
 		t.Fatalf("existing PoolSlot = %d, want 1", existing.PoolSlot)
+	}
+	if anonymousNew.PoolSlot != 2 {
+		t.Fatalf("anonymous new PoolSlot = %d, want 2", anonymousNew.PoolSlot)
 	}
 }
 
