@@ -70,13 +70,14 @@ TOTAL_ISSUES_CLOSED=0
 ANOMALIES=""
 
 for DB in $DATABASES; do
-    # Step 1: Reap — close open wisps past max_age with closed/missing parent.
+    # Step 1: Reap — close open wisps past max_age.
+    # NOTE: parent-tracking removed — wisps schema has no parent_id column;
+    # parentage now lives in beads (hook_bead/role_bead). Until reaper is
+    # rewritten to honor that, just close any old open wisp.
     REAP_COUNT=$(dolt_sql -r csv -q "
-        SELECT COUNT(*) FROM \`$DB\`.wisps w
-        LEFT JOIN \`$DB\`.wisps parent ON w.parent_id = parent.id
-        WHERE w.status IN ('open', 'hooked', 'in_progress')
-        AND w.created_at < DATE_SUB(NOW(), INTERVAL $MAX_AGE_H HOUR)
-        AND (parent.id IS NULL OR parent.status = 'closed')
+        SELECT COUNT(*) FROM \`$DB\`.wisps
+        WHERE status IN ('open', 'hooked', 'in_progress')
+        AND created_at < DATE_SUB(NOW(), INTERVAL $MAX_AGE_H HOUR)
     " 2>/dev/null | tail -1 || echo "0")
 
     if [ "$REAP_COUNT" -gt 0 ] && [ -z "$DRY_RUN" ]; then
@@ -84,11 +85,6 @@ for DB in $DATABASES; do
             UPDATE \`$DB\`.wisps SET status='closed', closed_at=NOW()
             WHERE status IN ('open', 'hooked', 'in_progress')
             AND created_at < DATE_SUB(NOW(), INTERVAL $MAX_AGE_H HOUR)
-            AND id IN (
-                SELECT w.id FROM (SELECT * FROM \`$DB\`.wisps) w
-                LEFT JOIN \`$DB\`.wisps parent ON w.parent_id = parent.id
-                WHERE parent.id IS NULL OR parent.status = 'closed'
-            )
         " 2>/dev/null || true
         TOTAL_REAPED=$((TOTAL_REAPED + REAP_COUNT))
     fi
@@ -109,21 +105,10 @@ for DB in $DATABASES; do
         TOTAL_PURGED=$((TOTAL_PURGED + PURGE_COUNT))
     fi
 
-    # Step 3: Purge closed mail past mail_delete_age.
-    MAIL_COUNT=$(dolt_sql -r csv -q "
-        SELECT COUNT(*) FROM \`$DB\`.mail
-        WHERE status = 'closed'
-        AND closed_at < DATE_SUB(NOW(), INTERVAL $MAIL_AGE_H HOUR)
-    " 2>/dev/null | tail -1 || echo "0")
-
-    if [ "$MAIL_COUNT" -gt 0 ] && [ -z "$DRY_RUN" ]; then
-        dolt_sql -q "
-            DELETE FROM \`$DB\`.mail
-            WHERE status = 'closed'
-            AND closed_at < DATE_SUB(NOW(), INTERVAL $MAIL_AGE_H HOUR)
-        " 2>/dev/null || true
-        TOTAL_MAIL_PURGED=$((TOTAL_MAIL_PURGED + MAIL_COUNT))
-    fi
+    # Step 3: Mail purge removed — `mail` is not a SQL table; mail messages
+    # are stored as beads (Type=message). Mail cleanup, if needed, must go
+    # through `bd`, not Dolt.
+    MAIL_COUNT=0
 
     # Step 4: Auto-close stale issues (exclude P0/P1, epics, active deps).
     STALE_IDS=$(dolt_sql -r csv -q "
@@ -161,10 +146,12 @@ for DB in $DATABASES; do
         ANOMALIES="${ANOMALIES}$DB: $OPEN_WISPS open wisps (threshold: $ALERT_THRESHOLD)\n"
     fi
 
-    # Commit Dolt changes.
+    # Commit Dolt changes. Must use CALL (not SELECT) and have an active
+    # database via USE — dolt sql has no -D/--use-db flag.
     if [ -z "$DRY_RUN" ]; then
         dolt_sql -q "
-            SELECT DOLT_COMMIT('-Am', 'reaper: reaped=$REAP_COUNT purged=$PURGE_COUNT mail=$MAIL_COUNT stale=$TOTAL_ISSUES_CLOSED', '--author', 'reaper <reaper@gastown.local>')
+            USE \`$DB\`;
+            CALL DOLT_COMMIT('-Am', 'reaper: reaped=$REAP_COUNT purged=$PURGE_COUNT mail=$MAIL_COUNT stale=$TOTAL_ISSUES_CLOSED', '--author', 'reaper <reaper@gastown.local>')
         " 2>/dev/null || true
     fi
 done

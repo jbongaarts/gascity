@@ -119,8 +119,8 @@ func TestBuiltinDatabaseEnumeratorsSkipManagedProbeDatabase(t *testing.T) {
 		needle   string
 		minCount int
 	}{
-		{"maintenance", filepath.Join("assets", "scripts", "jsonl-export.sh"), maintenanceSystemNeedle, 1},
-		{"maintenance", filepath.Join("assets", "scripts", "reaper.sh"), maintenanceSystemNeedle, 1},
+		{"maintenance", filepath.Join("assets", "scripts", "jsonl-export.sh"), doltSystemNeedle, 1},
+		{"maintenance", filepath.Join("assets", "scripts", "reaper.sh"), doltSystemNeedle, 1},
 		{"dolt", filepath.Join("commands", "list", "run.sh"), doltSystemNeedle, 1},
 		{"dolt", filepath.Join("commands", "cleanup", "run.sh"), doltSystemNeedle, 1},
 		{"dolt", filepath.Join("commands", "health", "run.sh"), doltSystemNeedle, 2},

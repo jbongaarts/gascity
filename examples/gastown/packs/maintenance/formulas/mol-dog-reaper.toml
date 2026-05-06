@@ -2,23 +2,27 @@ description = """
 Reap stale wisps and close stale issues across all Dolt databases.
 
 The Reaper Dog closes wisps past their retention age, purges closed wisps
-and mail older than the purge threshold, and auto-closes stale issues.
-This keeps the wisp and mail tables from growing unbounded.
+older than the purge threshold, and auto-closes stale issues. This keeps
+the wisps table from growing unbounded.
 
 Current behavior:
 - Closes open/hooked/in_progress wisps older than max_age (default 24h)
-  whose parent molecule is closed or missing
 - Purges (deletes) closed wisps past purge_age (default 3 days)
-- Purges closed mail past mail_delete_age (default 3 days)
 - Auto-closes stale issues open >7 days with no status change
 - Alerts if open wisp count exceeds threshold (500)
+
+Mail is NOT a SQL table — mail messages are beads (Type=message). Any
+mail cleanup must go through `bd`, never Dolt. Wisp parentage is no
+longer carried on the wisps row; it lives in beads via hook_bead /
+role_bead. Until the reaper is rewritten against the new parentage
+model, reaping is by age only.
 
 ## Dog Contract
 
 This is infrastructure work. You:
 1. Scan all production databases for candidates
-2. Reap (close) wisps past max_age whose parent is closed/missing
-3. Purge (delete) closed wisps past purge_age + old closed mail
+2. Reap (close) wisps past max_age
+3. Purge (delete) closed wisps past purge_age
 4. Auto-close stale issues (with exclusions)
 5. Report findings and flag anomalies
 6. Return to kennel
@@ -30,7 +34,6 @@ This is infrastructure work. You:
 | max_age | config | Max wisp age before reaping (default 24h) |
 | purge_age | config | Max closed wisp age before purging (default 3d) |
 | stale_issue_age | config | Max issue staleness before auto-close (default 7d) |
-| mail_delete_age | config | Max closed mail age before purging (default 3d) |
 | alert_threshold | config | Open wisp count that triggers escalation (default 500) |
 | dry_run | config | If "true", report without acting |
 | databases | config | Comma-separated DB list (empty = auto-discover) |
@@ -45,7 +48,6 @@ Auto-close excludes P0/P1, epics, and issues with active dependencies.
 ## Anomaly Detection
 
 The Dog should watch for and flag:
-- Dangling parent references (wisps referencing purged parents)
 - Sudden spikes in reap candidates (suggests a wisp lifecycle problem)
 - Open wisp counts exceeding alert_threshold
 - Dolt commit failures (data may not be persisted)
@@ -67,10 +69,6 @@ default = "72h"
 [vars.stale_issue_age]
 description = "Max issue staleness before auto-close (e.g., '168h' = 7 days)"
 default = "168h"
-
-[vars.mail_delete_age]
-description = "Max closed mail age before purging (e.g., '72h' = 3 days)"
-default = "72h"
 
 [vars.alert_threshold]
 description = "Open wisp count that triggers escalation warning"
@@ -100,30 +98,25 @@ on port {{dolt_port}}.
 
 **2. For each database, count candidates:**
 ```sql
--- Open wisps past max_age with closed/missing parent (reap candidates)
-SELECT COUNT(*) FROM wisps w
-LEFT JOIN wisps parent ON w.parent_id = parent.id
-WHERE w.status IN ('open', 'hooked', 'in_progress')
-AND w.created_at < NOW() - INTERVAL {{max_age}}
-AND (parent.id IS NULL OR parent.status = 'closed');
+-- Open wisps past max_age (reap candidates)
+SELECT COUNT(*) FROM wisps
+WHERE status IN ('open', 'hooked', 'in_progress')
+AND created_at < NOW() - INTERVAL {{max_age}};
 
 -- Closed wisps past purge_age (purge candidates)
 SELECT COUNT(*) FROM wisps
 WHERE status = 'closed'
 AND closed_at < NOW() - INTERVAL {{purge_age}};
 
--- Closed mail past mail_delete_age (mail purge candidates)
-SELECT COUNT(*) FROM mail
-WHERE status = 'closed'
-AND closed_at < NOW() - INTERVAL {{mail_delete_age}};
-
 -- Total open wisps (for alert threshold)
 SELECT COUNT(*) FROM wisps
 WHERE status IN ('open', 'hooked', 'in_progress');
 ```
 
+Mail is not a SQL table — do not query it via Dolt. Mail messages are
+beads with Type=message; any mail cleanup goes through `bd`.
+
 **3. Check for anomalies:**
-- Dangling parent references: wisps whose parent_id points to a missing row
 - Sudden spikes in reap candidates vs previous cycle
 - Open wisp count exceeding {{alert_threshold}}
 
@@ -138,18 +131,18 @@ id = "reap"
 title = "Reap stale wisps"
 needs = ["scan"]
 description = """
-Close wisps past max_age whose parent molecule is closed or missing.
+Close wisps past max_age.
+
+Wisp parentage no longer lives on the wisps row (the schema has no
+`parent_id` column; parentage is in beads via hook_bead / role_bead).
+Until the reaper is rewritten against the new parentage model, reap
+strictly by age.
 
 **1. For each database with reap candidates:**
 ```sql
 UPDATE wisps SET status='closed', closed_at=NOW()
 WHERE status IN ('open', 'hooked', 'in_progress')
-AND created_at < NOW() - INTERVAL {{max_age}}
-AND id IN (
-  SELECT w.id FROM wisps w
-  LEFT JOIN wisps parent ON w.parent_id = parent.id
-  WHERE parent.id IS NULL OR parent.status = 'closed'
-);
+AND created_at < NOW() - INTERVAL {{max_age}};
 ```
 
 **2. Record results:**
@@ -164,10 +157,10 @@ log a warning and consider escalating.
 
 [[steps]]
 id = "purge"
-title = "Purge old closed wisps and mail"
+title = "Purge old closed wisps"
 needs = ["reap"]
 description = """
-Delete closed wisps past purge_age and closed mail past mail_delete_age.
+Delete closed wisps past purge_age.
 
 **1. Purge closed wisps for each database:**
 ```sql
@@ -176,22 +169,16 @@ WHERE status = 'closed'
 AND closed_at < NOW() - INTERVAL {{purge_age}};
 ```
 
-**2. Purge closed mail for each database:**
-```sql
-DELETE FROM mail
-WHERE status = 'closed'
-AND closed_at < NOW() - INTERVAL {{mail_delete_age}};
-```
-
-**3. Check for anomalies:**
+**2. Check for anomalies:**
 - Verify Dolt commit succeeded (data may not be persisted if commit fails)
 - Check purge counts are reasonable (not suspiciously high or low)
 
-**Safety:** Only deletes wisps/mail that are already closed AND past the
-retention window. Active wisps are never touched. Reverse dependency
-references are cleaned up to prevent dangling parent refs.
+**Safety:** Only deletes wisps that are already closed AND past the
+retention window. Active wisps are never touched. Mail messages live
+as beads (Type=message), not in a SQL table — use `bd` for any mail
+cleanup, never DELETE FROM mail.
 
-**Exit criteria:** Old closed wisps and mail purged."""
+**Exit criteria:** Old closed wisps purged."""
 
 [[steps]]
 id = "auto-close"
@@ -240,7 +227,6 @@ Generate summary and signal completion.
 - Databases scanned
 - Wisps reaped (closed stale open wisps)
 - Wisps purged (deleted old closed wisps)
-- Mail purged (deleted old closed mail)
 - Issues auto-closed (stale past {{stale_issue_age}}, excl. epics/P0-P1/deps)
 - Open wisps remaining
 - Anomalies detected (if any)
@@ -254,7 +240,7 @@ gc mail send mayor/ -s "ESCALATION: Reaper anomalies detected [MEDIUM]" \
 
 **3. Signal completion:**
 ```bash
-gc session nudge deacon/ "DOG_DONE: reaper — reaped:<count>, purged:<count>, mail:<count>, closed:<count>"
+gc session nudge deacon/ "DOG_DONE: reaper — reaped:<count>, purged:<count>, closed:<count>"
 ```
 
 **4. Close work and exit:**

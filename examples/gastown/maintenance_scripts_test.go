@@ -15,6 +15,11 @@ import (
 
 var rawDoltSQLCallRe = regexp.MustCompile(`(?m)(^|[^A-Za-z0-9_-])dolt(?:[ \t]+|[ \t]*\\[ \t]*\r?\n[ \t]*)+sql([ \t]|$)`)
 
+var (
+	sqlFenceRe  = regexp.MustCompile("(?s)```sql\\s*\\n(.*?)```")
+	mailTableRe = regexp.MustCompile(`(?i)(?:FROM|UPDATE|INTO|JOIN)\s+\x60?mail\x60?\b`)
+)
+
 func TestMaintenanceDoltScriptsUseProjectedConnectionTarget(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -879,6 +884,91 @@ exit 0
 				}
 			}
 		})
+	}
+}
+
+func TestReaperFormulaSQLReflectsCurrentSchema(t *testing.T) {
+	path := filepath.Join(exampleDir(), "packs", "maintenance", "formulas", "mol-dog-reaper.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s): %v", path, err)
+	}
+
+	// Extract every ```sql ... ``` fence body and scan only those — prose
+	// warnings about the deprecated patterns are intentional and must not
+	// trip this guard.
+	matches := sqlFenceRe.FindAllSubmatch(data, -1)
+	if len(matches) == 0 {
+		t.Fatalf("no ```sql fences found in %s; test is no-op", filepath.Base(path))
+	}
+
+	for i, m := range matches {
+		fence := string(m[1])
+		if strings.Contains(fence, "parent_id") {
+			t.Errorf("formula sql fence %d references parent_id (column does not exist in wisps):\n%s", i, fence)
+		}
+		if strings.Contains(fence, "LEFT JOIN wisps parent") {
+			t.Errorf("formula sql fence %d still has the broken parent self-join:\n%s", i, fence)
+		}
+		if mailTableRe.MatchString(fence) {
+			t.Errorf("formula sql fence %d treats `mail` as a SQL table; mail messages are beads with Type=message:\n%s", i, fence)
+		}
+	}
+}
+
+func TestReaperSQLReflectsCurrentSchema(t *testing.T) {
+	cityDir := t.TempDir()
+	binDir := t.TempDir()
+	doltLog := filepath.Join(t.TempDir(), "dolt-args.log")
+
+	writeMaintenanceDoltStub(t, filepath.Join(binDir, "dolt"))
+	writeExecutable(t, filepath.Join(binDir, "gc"), `#!/bin/sh
+exit 0
+`)
+
+	env := map[string]string{
+		"DOLT_ARGS_LOG":    doltLog,
+		"DOLT_DBS":         "beads",
+		"GC_CITY":          cityDir,
+		"GC_CITY_PATH":     cityDir,
+		"GC_DOLT_HOST":     "127.0.0.1",
+		"GC_DOLT_PORT":     "3307",
+		"GC_DOLT_USER":     "root",
+		"GC_DOLT_PASSWORD": "",
+		"PATH":             binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
+		// No GC_REAPER_DRY_RUN — allow DOLT_COMMIT to fire.
+	}
+
+	runScript(t, filepath.Join(exampleDir(), "packs", "maintenance", "assets", "scripts", "reaper.sh"), env)
+
+	logData, err := os.ReadFile(doltLog)
+	if err != nil {
+		t.Fatalf("ReadFile(dolt log): %v", err)
+	}
+	log := string(logData)
+
+	// parent_id was removed: wisps schema has no such column.
+	if strings.Contains(log, "parent_id") {
+		t.Errorf("reaper SQL references parent_id (column does not exist in wisps):\n%s", log)
+	}
+	// mail was removed: not a SQL table; messages are beads with type=message.
+	if strings.Contains(log, ".mail") {
+		t.Errorf("reaper SQL references .mail table (does not exist in beads schema):\n%s", log)
+	}
+	// DOLT_COMMIT must use CALL, not SELECT.
+	if strings.Contains(log, "SELECT DOLT_COMMIT") {
+		t.Errorf("reaper uses SELECT DOLT_COMMIT; must use CALL DOLT_COMMIT:\n%s", log)
+	}
+	if !strings.Contains(log, "CALL DOLT_COMMIT") {
+		t.Errorf("reaper missing CALL DOLT_COMMIT:\n%s", log)
+	}
+	// USE <db> must precede CALL DOLT_COMMIT so the procedure resolves.
+	callIdx := strings.Index(log, "CALL DOLT_COMMIT")
+	useIdx := strings.Index(log, "USE `beads`")
+	if useIdx < 0 {
+		t.Errorf("USE `beads` not found in dolt log:\n%s", log)
+	} else if callIdx >= 0 && useIdx > callIdx {
+		t.Errorf("USE `beads` appears after CALL DOLT_COMMIT:\n%s", log)
 	}
 }
 
