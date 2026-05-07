@@ -52,7 +52,7 @@ detects dead agents and restarts them — that's its job, not yours.
 gc bd list --assignee=deacon --status=in_progress --json --limit=5
 
 # Does the deacon have unread mail? (may explain idle state)
-gc mail inbox --address=deacon --json 2>/dev/null | jq length
+gc mail count deacon 2>/dev/null
 ```
 
 Read the wisp timestamps and pane output. Build a picture:
