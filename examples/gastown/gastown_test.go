@@ -1846,3 +1846,57 @@ func TestDeaconPatrolDetectsQueueStarvation(t *testing.T) {
 		`id = "utility-agent-health"`,
 	)
 }
+
+// TestRefineryPromptUsesCanonicalAgentIdentity verifies the refinery
+// prompt's wisp lookup and assignment commands use $GC_AGENT, which the
+// session harness guarantees (internal/session/lifecycle.go). $GC_ALIAS
+// can be empty or stale, which was the root cause of the stuck self-poll
+// reported in upstream #1833.
+func TestRefineryPromptUsesCanonicalAgentIdentity(t *testing.T) {
+	dir := exampleDir()
+	path := filepath.Join(dir, "packs", "gastown", "agents", "refinery", "prompt.template.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading refinery prompt: %v", err)
+	}
+	body := string(data)
+
+	for _, want := range []string{
+		`gc bd list --assignee="$GC_AGENT" --status=in_progress`,
+		`gc bd update "$WISP" --assignee="$GC_AGENT"`,
+		`| Find assigned work | ` + "`" + `gc bd list --assignee="$GC_AGENT" --status=open` + "`" + ` |`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("refinery prompt missing canonical $GC_AGENT usage %q", want)
+		}
+	}
+
+	// The refinery prompt must NOT rely on $GC_ALIAS for its own identity
+	// (it can be empty; the harness-guaranteed identity is $GC_AGENT).
+	if strings.Contains(body, `--assignee="$GC_ALIAS"`) {
+		t.Errorf("refinery prompt still uses $GC_ALIAS for its own identity; switch to $GC_AGENT")
+	}
+}
+
+// TestRefineryFormulaValidatesAgentIdentityAtStartup verifies the
+// refinery formula fails fast when $GC_AGENT is unset or empty, instead
+// of silently returning no results and looking healthy-idle.
+func TestRefineryFormulaValidatesAgentIdentityAtStartup(t *testing.T) {
+	dir := exampleDir()
+	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-refinery-patrol.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading refinery formula: %v", err)
+	}
+	body := string(data)
+
+	for _, want := range []string{
+		`if [ -z "${GC_AGENT:-}" ]; then`,
+		`GC_AGENT is empty`,
+		`gc runtime drain-ack`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("refinery formula missing $GC_AGENT startup validation %q", want)
+		}
+	}
+}
