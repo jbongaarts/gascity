@@ -203,6 +203,85 @@ func TestProviderLifecycleProcessEnvOmitsArchiveLevelWhenNil(t *testing.T) {
 	}
 }
 
+func TestProviderLifecycleProcessEnvFallsBackToLaunchctlGetenvForLoglevel(t *testing.T) {
+	// `gc start` runs in the user's shell, which doesn't see `launchctl
+	// setenv` values. Without the fallback, GC_DOLT_LOGLEVEL set only via
+	// launchctl is silently dropped between the shell and gc-beads-bd.sh,
+	// so the managed dolt config gets written with `log_level: warning`.
+	t.Setenv("GC_DOLT_LOGLEVEL", "")
+	_ = os.Unsetenv("GC_DOLT_LOGLEVEL")
+
+	prev := providerLifecycleLaunchctlGetenv
+	providerLifecycleLaunchctlGetenv = func(key string) string {
+		if key == "GC_DOLT_LOGLEVEL" {
+			return "debug"
+		}
+		return ""
+	}
+	t.Cleanup(func() { providerLifecycleLaunchctlGetenv = prev })
+
+	cityPath := t.TempDir()
+	envEntries := providerLifecycleProcessEnv(cityPath, "exec:"+gcBeadsBdScriptPath(cityPath))
+	got := ""
+	for _, entry := range envEntries {
+		if strings.HasPrefix(entry, "GC_DOLT_LOGLEVEL=") {
+			got = strings.TrimPrefix(entry, "GC_DOLT_LOGLEVEL=")
+			break
+		}
+	}
+	if got != "debug" {
+		t.Fatalf("GC_DOLT_LOGLEVEL = %q, want %q (launchctl fallback should fire when os.Environ lacks it)", got, "debug")
+	}
+}
+
+func TestProviderLifecycleProcessEnvPrefersOSEnvOverLaunchctlForLoglevel(t *testing.T) {
+	// When a user explicitly exports GC_DOLT_LOGLEVEL in the shell, that
+	// value must win over any stale launchctl-domain value.
+	t.Setenv("GC_DOLT_LOGLEVEL", "trace")
+
+	prev := providerLifecycleLaunchctlGetenv
+	providerLifecycleLaunchctlGetenv = func(key string) string {
+		if key == "GC_DOLT_LOGLEVEL" {
+			return "debug"
+		}
+		return ""
+	}
+	t.Cleanup(func() { providerLifecycleLaunchctlGetenv = prev })
+
+	cityPath := t.TempDir()
+	envEntries := providerLifecycleProcessEnv(cityPath, "exec:"+gcBeadsBdScriptPath(cityPath))
+	got := ""
+	for _, entry := range envEntries {
+		if strings.HasPrefix(entry, "GC_DOLT_LOGLEVEL=") {
+			got = strings.TrimPrefix(entry, "GC_DOLT_LOGLEVEL=")
+			break
+		}
+	}
+	if got != "trace" {
+		t.Fatalf("GC_DOLT_LOGLEVEL = %q, want %q (os.Environ should win over launchctl)", got, "trace")
+	}
+}
+
+func TestProviderLifecycleProcessEnvOmitsLoglevelWhenLaunchctlEmpty(t *testing.T) {
+	// When neither os.Environ nor launchctl has GC_DOLT_LOGLEVEL, the env
+	// must not contain a synthetic empty value (which would override
+	// gc-beads-bd.sh's `${GC_DOLT_LOGLEVEL:-warning}` default to empty).
+	t.Setenv("GC_DOLT_LOGLEVEL", "")
+	_ = os.Unsetenv("GC_DOLT_LOGLEVEL")
+
+	prev := providerLifecycleLaunchctlGetenv
+	providerLifecycleLaunchctlGetenv = func(string) string { return "" }
+	t.Cleanup(func() { providerLifecycleLaunchctlGetenv = prev })
+
+	cityPath := t.TempDir()
+	envEntries := providerLifecycleProcessEnv(cityPath, "exec:"+gcBeadsBdScriptPath(cityPath))
+	for _, entry := range envEntries {
+		if strings.HasPrefix(entry, "GC_DOLT_LOGLEVEL=") {
+			t.Fatalf("GC_DOLT_LOGLEVEL should be absent when neither os.Environ nor launchctl has it, got %q", entry)
+		}
+	}
+}
+
 func TestGcBeadsBdReadOnlyFallbackDoesNotTargetLegacyProbeDatabase(t *testing.T) {
 	cityPath := t.TempDir()
 	if err := MaterializeBuiltinPacks(cityPath); err != nil {
