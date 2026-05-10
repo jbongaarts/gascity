@@ -483,6 +483,8 @@ gc events --watch --type=bead.updated \
   --after=$SEQ --timeout {{event_timeout}}s
 ```
 
+`--timeout` makes this command self-terminating — it exits on its own when an event arrives or the timeout fires. Do not add `&`, pipe to another command, or wrap in a background process.
+
 On event: proceed immediately.
 On timeout: double the timeout (cap 300s) and proceed anyway.
 
