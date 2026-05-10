@@ -78,7 +78,7 @@ const (
 )
 
 var builtinProviderOrder = []string{
-	"claude", "codex", "gemini", "cursor", "copilot",
+	"claude", "codex", "gemini", "kiro", "cursor", "copilot",
 	"amp", "opencode", "auggie", "pi", "omp",
 }
 
@@ -131,6 +131,7 @@ var builtinProviderSpecs = map[string]BuiltinProviderSpec{
 					{Value: "low", Label: "Low", FlagArgs: []string{"--effort", "low"}},
 					{Value: "medium", Label: "Medium", FlagArgs: []string{"--effort", "medium"}},
 					{Value: "high", Label: "High", FlagArgs: []string{"--effort", "high"}},
+					{Value: "xhigh", Label: "Extra High", FlagArgs: []string{"--effort", "xhigh"}},
 					{Value: "max", Label: "Max", FlagArgs: []string{"--effort", "max"}},
 				},
 			},
@@ -264,6 +265,18 @@ var builtinProviderSpecs = map[string]BuiltinProviderSpec{
 				},
 			},
 		},
+	},
+	"kiro": {
+		DisplayName:      "Kiro",
+		Command:          "kiro-cli",
+		Args:             []string{"chat", "--no-interactive", "--agent", "gascity", "--trust-all-tools"},
+		PromptMode:       "arg",
+		ReadyDelayMs:     5000,
+		ProcessNames:     []string{"kiro-cli", "kiro", "node"},
+		SupportsACP:      true,
+		SupportsHooks:    true,
+		InstructionsFile: "AGENTS.md",
+		ACPArgs:          []string{"acp", "--agent", "gascity"},
 	},
 	"cursor": {
 		DisplayName:       "Cursor Agent",

@@ -16,6 +16,7 @@ import (
 	"github.com/gastownhall/gascity/internal/citylayout"
 	"github.com/gastownhall/gascity/internal/fsys"
 	"github.com/gastownhall/gascity/internal/orders"
+	"github.com/gastownhall/gascity/internal/pricing"
 )
 
 // validAgentName matches names safe for use in session identifiers.
@@ -326,6 +327,17 @@ type City struct {
 	// ResolvedProviders is the eager-resolution cache populated by
 	// BuildResolvedProviderCache after compose + patch. Runtime-only.
 	ResolvedProviders map[string]ResolvedProvider `toml:"-" json:"-"`
+	// Pricing holds per-model cost rate overrides keyed by (provider, model).
+	// City-level entries override pack-level entries which override the
+	// defaults shipped with the pricing package. See internal/pricing for the
+	// estimation seam introduced by issue #1255 (1d).
+	Pricing []pricing.ModelPricing `toml:"pricing,omitempty"`
+	// PackPricing preserves the pack-level pricing layer before Pricing is
+	// flattened for legacy callers. Runtime-only.
+	PackPricing []pricing.ModelPricing `toml:"-" json:"-"`
+	// CityPricing preserves the city-level pricing layer before Pricing is
+	// flattened for legacy callers. Runtime-only.
+	CityPricing []pricing.ModelPricing `toml:"-" json:"-"`
 }
 
 // NamedSession defines a canonical persistent session backed by an agent
@@ -444,6 +456,12 @@ type Rig struct {
 	Path string `toml:"path,omitempty"`
 	// Prefix overrides the auto-derived bead ID prefix for this rig.
 	Prefix string `toml:"prefix,omitempty"`
+	// DefaultBranch is the rig repository's mainline branch (e.g. "main",
+	// "master", "develop"). When set, polecats and the refinery use this
+	// as the default merge target instead of probing origin/HEAD at sling
+	// time. Captured by `gc rig add` from the rig's git config; set
+	// manually for rigs whose mainline isn't reachable via origin/HEAD.
+	DefaultBranch string `toml:"default_branch,omitempty"`
 	// Suspended prevents the reconciler from spawning agents in this rig. Toggle with gc rig suspend/resume.
 	Suspended bool `toml:"suspended,omitempty"`
 	// FormulasDir is a rig-local formula directory (Layer 4). Overrides
@@ -740,6 +758,13 @@ func (r *Rig) EffectivePrefix() string {
 	return DeriveBeadsPrefix(r.Name)
 }
 
+// EffectiveDefaultBranch returns the rig's recorded default branch, or the
+// empty string if none is set. Callers should fall back to a runtime probe
+// (e.g., git symbolic-ref) when this returns "".
+func (r *Rig) EffectiveDefaultBranch() string {
+	return strings.TrimSpace(r.DefaultBranch)
+}
+
 // EffectiveHQPrefix returns the bead ID prefix for the city's HQ store.
 // Uses the effective site-bound prefix first, then the declared workspace
 // Prefix, then derives one from the effective city name.
@@ -847,7 +872,7 @@ type Workspace struct {
 	// InstallAgentHooks lists provider names whose hooks should be installed
 	// into agent working directories. Agent-level overrides workspace-level
 	// (replace, not additive). Supported: "claude", "codex", "gemini",
-	// "opencode", "copilot", "cursor", "pi", "omp".
+	// "opencode", "copilot", "cursor", "kiro", "pi", "omp".
 	InstallAgentHooks []string `toml:"install_agent_hooks,omitempty"`
 	// GlobalFragments lists named template fragments injected into every
 	// agent's rendered prompt. Applied before per-agent InjectFragments.
@@ -1411,6 +1436,13 @@ type DaemonConfig struct {
 	// single tick. Nil (unset) defaults to 5. Values <= 0 are treated as the
 	// default — set a positive integer to override.
 	MaxWakesPerTick *int `toml:"max_wakes_per_tick,omitempty" jsonschema:"default=5"`
+	// NudgeDispatcher selects how queued nudges get delivered to running
+	// sessions. "legacy" (default) auto-spawns a per-session `gc nudge poll`
+	// process that polls the file-backed queue every 2s. "supervisor" runs
+	// the delivery loop inside the city runtime instead, with a unix-socket
+	// wake fast path triggered by enqueue, eliminating the per-session bd
+	// shellout storm.
+	NudgeDispatcher string `toml:"nudge_dispatcher,omitempty" jsonschema:"default=legacy,enum=legacy,enum=supervisor"`
 }
 
 // PatrolIntervalDuration returns the patrol interval as a time.Duration.
@@ -1424,6 +1456,18 @@ func (d *DaemonConfig) PatrolIntervalDuration() time.Duration {
 		return 30 * time.Second
 	}
 	return dur
+}
+
+// NudgeDispatcherMode returns the nudge dispatcher mode, defaulting to
+// "legacy". Unknown values are treated as "legacy" so a malformed config
+// does not silently disable the per-session pollers.
+func (d *DaemonConfig) NudgeDispatcherMode() string {
+	switch d.NudgeDispatcher {
+	case "supervisor":
+		return "supervisor"
+	default:
+		return "legacy"
+	}
 }
 
 // MaxRestartsOrDefault returns the max restarts threshold. Nil (unset) defaults
@@ -2838,8 +2882,8 @@ func DefaultCity(name string) City {
 
 func defaultInstallAgentHooksForProvider(provider string) []string {
 	switch strings.TrimSpace(provider) {
-	case "opencode":
-		return []string{"opencode"}
+	case "opencode", "kiro":
+		return []string{strings.TrimSpace(provider)}
 	default:
 		return nil
 	}

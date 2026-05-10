@@ -116,6 +116,38 @@ start_command = "claude --dangerously-skip-permissions"
 	}
 }
 
+func TestParseRigDefaultBranch(t *testing.T) {
+	data := []byte(`
+[workspace]
+name = "lights"
+
+[[rigs]]
+name = "scamper"
+path = "/scamper"
+default_branch = "master"
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(cfg.Rigs) != 1 {
+		t.Fatalf("len(Rigs) = %d, want 1", len(cfg.Rigs))
+	}
+	if got := cfg.Rigs[0].DefaultBranch; got != "master" {
+		t.Errorf("DefaultBranch = %q, want %q", got, "master")
+	}
+	if got := cfg.Rigs[0].EffectiveDefaultBranch(); got != "master" {
+		t.Errorf("EffectiveDefaultBranch = %q, want %q", got, "master")
+	}
+}
+
+func TestEffectiveDefaultBranch_EmptyWhenUnset(t *testing.T) {
+	r := Rig{Name: "rig"}
+	if got := r.EffectiveDefaultBranch(); got != "" {
+		t.Errorf("EffectiveDefaultBranch() = %q, want empty", got)
+	}
+}
+
 func TestParseAgentSkillsAndMCP(t *testing.T) {
 	data := []byte(`
 [workspace]
@@ -912,11 +944,22 @@ name = "bright-lights"
 provider = "claude"
 
 [providers.kiro]
-command = "kiro"
-args = ["--autonomous"]
+command = "kiro-cli"
+args = ["chat", "--no-interactive", "--agent", "gascity", "--trust-all-tools"]
 prompt_mode = "arg"
 ready_delay_ms = 5000
-process_names = ["kiro", "node"]
+process_names = ["kiro-cli", "kiro", "node"]
+supports_hooks = true
+instructions_file = "AGENTS.md"
+resume_flag = "--resume"
+resume_style = "flag"
+
+[providers.kiro.env]
+KIRO_AGENT_MODE = "headless"
+
+[providers.kiro.permission_modes]
+default = "--trust-mode default"
+unrestricted = "--trust-mode full"
 
 [[agent]]
 name = "mayor"
@@ -932,17 +975,104 @@ name = "mayor"
 	if !ok {
 		t.Fatal("Providers[kiro] not found")
 	}
-	if kiro.Command != "kiro" {
-		t.Errorf("Command = %q, want %q", kiro.Command, "kiro")
+	if kiro.Command != "kiro-cli" {
+		t.Errorf("Command = %q, want %q", kiro.Command, "kiro-cli")
 	}
-	if len(kiro.Args) != 1 || kiro.Args[0] != "--autonomous" {
-		t.Errorf("Args = %v, want [--autonomous]", kiro.Args)
+	if want := []string{"chat", "--no-interactive", "--agent", "gascity", "--trust-all-tools"}; !reflect.DeepEqual(kiro.Args, want) {
+		t.Errorf("Args = %v, want %v", kiro.Args, want)
 	}
 	if kiro.PromptMode != "arg" {
 		t.Errorf("PromptMode = %q, want %q", kiro.PromptMode, "arg")
 	}
 	if kiro.ReadyDelayMs != 5000 {
 		t.Errorf("ReadyDelayMs = %d, want 5000", kiro.ReadyDelayMs)
+	}
+	if len(kiro.ProcessNames) != 3 || kiro.ProcessNames[0] != "kiro-cli" || kiro.ProcessNames[1] != "kiro" || kiro.ProcessNames[2] != "node" {
+		t.Errorf("ProcessNames = %v, want [kiro-cli kiro node]", kiro.ProcessNames)
+	}
+	if !derefBool(kiro.SupportsHooks) {
+		t.Error("SupportsHooks = false, want true")
+	}
+	if kiro.InstructionsFile != "AGENTS.md" {
+		t.Errorf("InstructionsFile = %q, want %q", kiro.InstructionsFile, "AGENTS.md")
+	}
+	if kiro.ResumeFlag != "--resume" {
+		t.Errorf("ResumeFlag = %q, want %q", kiro.ResumeFlag, "--resume")
+	}
+	if kiro.ResumeStyle != "flag" {
+		t.Errorf("ResumeStyle = %q, want %q", kiro.ResumeStyle, "flag")
+	}
+	if kiro.Env["KIRO_AGENT_MODE"] != "headless" {
+		t.Errorf("Env[KIRO_AGENT_MODE] = %q, want %q", kiro.Env["KIRO_AGENT_MODE"], "headless")
+	}
+	if kiro.PermissionModes["unrestricted"] != "--trust-mode full" {
+		t.Errorf("PermissionModes[unrestricted] = %q, want %q", kiro.PermissionModes["unrestricted"], "--trust-mode full")
+	}
+	if kiro.PermissionModes["default"] != "--trust-mode default" {
+		t.Errorf("PermissionModes[default] = %q, want %q", kiro.PermissionModes["default"], "--trust-mode default")
+	}
+}
+
+func TestParseKiroProviderWithOptionsSchema(t *testing.T) {
+	data := []byte(`
+[workspace]
+name = "test"
+
+[providers.kiro]
+command = "kiro-cli"
+args = ["chat", "--no-interactive", "--agent", "gascity", "--trust-all-tools"]
+prompt_mode = "arg"
+ready_delay_ms = 5000
+
+[[providers.kiro.options_schema]]
+key = "permission_mode"
+label = "Trust Mode"
+type = "select"
+default = "unrestricted"
+
+  [[providers.kiro.options_schema.choices]]
+  value = "default"
+  label = "Default trust"
+  flag_args = ["--trust-mode", "default"]
+
+  [[providers.kiro.options_schema.choices]]
+  value = "unrestricted"
+  label = "Full trust"
+  flag_args = ["--trust-mode", "full"]
+
+[providers.kiro.option_defaults]
+permission_mode = "unrestricted"
+
+[[agent]]
+name = "worker"
+provider = "kiro"
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	kiro, ok := cfg.Providers["kiro"]
+	if !ok {
+		t.Fatal("Providers[kiro] not found")
+	}
+	if len(kiro.OptionsSchema) != 1 {
+		t.Fatalf("len(OptionsSchema) = %d, want 1", len(kiro.OptionsSchema))
+	}
+	opt := kiro.OptionsSchema[0]
+	if opt.Key != "permission_mode" {
+		t.Errorf("OptionsSchema[0].Key = %q, want %q", opt.Key, "permission_mode")
+	}
+	if len(opt.Choices) != 2 {
+		t.Fatalf("len(Choices) = %d, want 2", len(opt.Choices))
+	}
+	if opt.Choices[1].Value != "unrestricted" {
+		t.Errorf("Choices[1].Value = %q, want %q", opt.Choices[1].Value, "unrestricted")
+	}
+	if len(opt.Choices[1].FlagArgs) != 2 || opt.Choices[1].FlagArgs[1] != "full" {
+		t.Errorf("Choices[1].FlagArgs = %v, want [--trust-mode full]", opt.Choices[1].FlagArgs)
+	}
+	if kiro.OptionDefaults["permission_mode"] != "unrestricted" {
+		t.Errorf("OptionDefaults[permission_mode] = %q, want %q", kiro.OptionDefaults["permission_mode"], "unrestricted")
 	}
 }
 
@@ -1022,9 +1152,17 @@ func TestProvidersRoundTrip(t *testing.T) {
 		Workspace: Workspace{Name: "test"},
 		Providers: map[string]ProviderSpec{
 			"kiro": {
-				Command:    "kiro",
-				Args:       []string{"--autonomous"},
-				PromptMode: "arg",
+				Command:          "kiro-cli",
+				Args:             []string{"chat", "--no-interactive", "--agent", "gascity", "--trust-all-tools"},
+				PromptMode:       "arg",
+				ReadyDelayMs:     5000,
+				ProcessNames:     []string{"kiro-cli", "kiro", "node"},
+				SupportsHooks:    boolPtr(true),
+				InstructionsFile: "AGENTS.md",
+				ResumeFlag:       "--resume",
+				ResumeStyle:      "flag",
+				Env:              map[string]string{"KIRO_AGENT_MODE": "headless"},
+				PermissionModes:  map[string]string{"unrestricted": "--trust-mode full"},
 			},
 		},
 		Agents: []Agent{{Name: "mayor"}},
@@ -1044,14 +1182,38 @@ func TestProvidersRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("Providers[kiro] not found after round-trip")
 	}
-	if kiro.Command != "kiro" {
-		t.Errorf("Command = %q, want %q", kiro.Command, "kiro")
+	if kiro.Command != "kiro-cli" {
+		t.Errorf("Command = %q, want %q", kiro.Command, "kiro-cli")
 	}
-	if len(kiro.Args) != 1 || kiro.Args[0] != "--autonomous" {
-		t.Errorf("Args = %v, want [--autonomous]", kiro.Args)
+	if want := []string{"chat", "--no-interactive", "--agent", "gascity", "--trust-all-tools"}; !reflect.DeepEqual(kiro.Args, want) {
+		t.Errorf("Args = %v, want %v", kiro.Args, want)
 	}
 	if kiro.PromptMode != "arg" {
 		t.Errorf("PromptMode = %q, want %q", kiro.PromptMode, "arg")
+	}
+	if kiro.ReadyDelayMs != 5000 {
+		t.Errorf("ReadyDelayMs = %d, want 5000", kiro.ReadyDelayMs)
+	}
+	if len(kiro.ProcessNames) != 3 || kiro.ProcessNames[0] != "kiro-cli" || kiro.ProcessNames[1] != "kiro" || kiro.ProcessNames[2] != "node" {
+		t.Errorf("ProcessNames = %v, want [kiro-cli kiro node]", kiro.ProcessNames)
+	}
+	if !derefBool(kiro.SupportsHooks) {
+		t.Error("SupportsHooks = false after round-trip, want true")
+	}
+	if kiro.InstructionsFile != "AGENTS.md" {
+		t.Errorf("InstructionsFile = %q after round-trip, want %q", kiro.InstructionsFile, "AGENTS.md")
+	}
+	if kiro.ResumeFlag != "--resume" {
+		t.Errorf("ResumeFlag = %q after round-trip, want %q", kiro.ResumeFlag, "--resume")
+	}
+	if kiro.ResumeStyle != "flag" {
+		t.Errorf("ResumeStyle = %q after round-trip, want %q", kiro.ResumeStyle, "flag")
+	}
+	if kiro.Env["KIRO_AGENT_MODE"] != "headless" {
+		t.Errorf("Env[KIRO_AGENT_MODE] = %q after round-trip, want %q", kiro.Env["KIRO_AGENT_MODE"], "headless")
+	}
+	if kiro.PermissionModes["unrestricted"] != "--trust-mode full" {
+		t.Errorf("PermissionModes[unrestricted] = %q after round-trip, want %q", kiro.PermissionModes["unrestricted"], "--trust-mode full")
 	}
 }
 
@@ -1986,6 +2148,43 @@ name = "mayor"
 	got := cfg.Daemon.PatrolIntervalDuration()
 	if got != 30*time.Second {
 		t.Errorf("PatrolIntervalDuration() = %v, want 30s", got)
+	}
+}
+
+func TestParseDaemonNudgeDispatcher(t *testing.T) {
+	data := []byte(`
+[workspace]
+name = "test"
+
+[daemon]
+nudge_dispatcher = "supervisor"
+
+[[agent]]
+name = "mayor"
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if cfg.Daemon.NudgeDispatcher != "supervisor" {
+		t.Errorf("Daemon.NudgeDispatcher = %q, want %q", cfg.Daemon.NudgeDispatcher, "supervisor")
+	}
+	if got := cfg.Daemon.NudgeDispatcherMode(); got != "supervisor" {
+		t.Errorf("NudgeDispatcherMode() = %q, want %q", got, "supervisor")
+	}
+}
+
+func TestDaemonNudgeDispatcherDefault(t *testing.T) {
+	d := DaemonConfig{}
+	if got := d.NudgeDispatcherMode(); got != "legacy" {
+		t.Errorf("NudgeDispatcherMode() = %q, want %q", got, "legacy")
+	}
+}
+
+func TestDaemonNudgeDispatcherUnknownFallsBack(t *testing.T) {
+	d := DaemonConfig{NudgeDispatcher: "garbage"}
+	if got := d.NudgeDispatcherMode(); got != "legacy" {
+		t.Errorf("NudgeDispatcherMode() with unknown value = %q, want %q", got, "legacy")
 	}
 }
 
