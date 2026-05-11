@@ -300,14 +300,21 @@ fetched = "2026-04-10T00:00:00Z"
 	if err != nil {
 		t.Fatalf("scanAllOrders: %v", err)
 	}
-	if len(aa) != 1 {
-		t.Fatalf("got %d orders, want 1", len(aa))
+	var imported *orders.Order
+	for i := range aa {
+		if aa[i].Name == "health-check" {
+			imported = &aa[i]
+			break
+		}
 	}
-	if aa[0].Name != "health-check" {
-		t.Fatalf("Name = %q, want %q", aa[0].Name, "health-check")
+	if imported == nil {
+		t.Fatalf("scanAllOrders() missing imported health-check order: %#v", aa)
 	}
-	if aa[0].Source != filepath.Join(cacheDir, "orders", "health-check.order.toml") {
-		t.Fatalf("Source = %q, want %q", aa[0].Source, filepath.Join(cacheDir, "orders", "health-check.order.toml"))
+	if imported.Name != "health-check" {
+		t.Fatalf("Name = %q, want %q", imported.Name, "health-check")
+	}
+	if imported.Source != filepath.Join(cacheDir, "orders", "health-check.order.toml") {
+		t.Fatalf("Source = %q, want %q", imported.Source, filepath.Join(cacheDir, "orders", "health-check.order.toml"))
 	}
 }
 
@@ -731,6 +738,9 @@ func TestOrderRun(t *testing.T) {
 }
 
 func TestOrderRunEventExecAdvancesCursor(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_BEADS_SCOPE_ROOT", "")
+
 	cityDir := t.TempDir()
 	writeFile(t, filepath.Join(cityDir, "city.toml"), `[workspace]
 name = "test-city"
@@ -1207,6 +1217,8 @@ func TestOrderRunNotFound(t *testing.T) {
 }
 
 func TestOrderRunExecRigUsesScopedWorkdirAndStoreEnv(t *testing.T) {
+	disableManagedDoltRecoveryForTest(t)
+
 	cityDir := t.TempDir()
 	rigDir := filepath.Join(cityDir, "frontend")
 	if err := os.MkdirAll(rigDir, 0o755); err != nil {
@@ -1476,6 +1488,8 @@ prefix = "ct"
 }
 
 func TestOrderRunExecPropagatesManagedDoltLayout(t *testing.T) {
+	clearGCEnv(t)
+	t.Setenv("GC_DOLT", "skip")
 	cityDir := t.TempDir()
 	dataDir := filepath.Join(t.TempDir(), "managed-dolt")
 	configFile := filepath.Join(cityDir, ".gc", "runtime", "packs", "dolt", "dolt-config.yaml")

@@ -3302,20 +3302,36 @@ scale_check = "echo 3"
 		t.Errorf("ResolvedWorkspaceName = %q, want %q (should be overridden)", cfg.ResolvedWorkspaceName, "bright-lights")
 	}
 	explicit := explicitAgents(cfg.Agents)
-	if len(explicit) != 2 {
-		t.Fatalf("len(explicitAgents) = %d, want 2", len(explicit))
+	if len(explicit) != 3 {
+		t.Fatalf("len(explicitAgents) = %d, want 3", len(explicit))
 	}
-	if explicit[1].Name != "worker" {
-		t.Errorf("explicitAgents[1].Name = %q, want %q", explicit[1].Name, "worker")
+	explicitByName := make(map[string]config.Agent, len(explicit))
+	for _, agent := range explicit {
+		explicitByName[agent.Name] = agent
 	}
-	if explicit[1].MaxActiveSessions == nil {
-		t.Fatal("explicitAgents[1].MaxActiveSessions is nil, want non-nil")
+	mayor, ok := explicitByName["mayor"]
+	if !ok {
+		t.Fatalf("explicitAgents missing mayor: %+v", explicit)
 	}
-	if *explicit[1].MaxActiveSessions != 5 {
-		t.Errorf("explicitAgents[1].MaxActiveSessions = %d, want 5", *explicit[1].MaxActiveSessions)
+	worker, ok := explicitByName["worker"]
+	if !ok {
+		t.Fatalf("explicitAgents missing worker: %+v", explicit)
 	}
-	if !strings.HasSuffix(explicit[0].PromptTemplate, filepath.Join("agents", "mayor", "prompt.template.md")) {
-		t.Errorf("explicitAgents[0].PromptTemplate = %q, want suffix %q", explicit[0].PromptTemplate, filepath.Join("agents", "mayor", "prompt.template.md"))
+	dog, ok := explicitByName["dog"]
+	if !ok {
+		t.Fatalf("explicitAgents missing builtin maintenance dog agent: %+v", explicit)
+	}
+	if worker.MaxActiveSessions == nil {
+		t.Fatal("worker.MaxActiveSessions is nil, want non-nil")
+	}
+	if *worker.MaxActiveSessions != 5 {
+		t.Errorf("worker.MaxActiveSessions = %d, want 5", *worker.MaxActiveSessions)
+	}
+	if !strings.HasSuffix(mayor.PromptTemplate, filepath.Join("agents", "mayor", "prompt.template.md")) {
+		t.Errorf("mayor.PromptTemplate = %q, want suffix %q", mayor.PromptTemplate, filepath.Join("agents", "mayor", "prompt.template.md"))
+	}
+	if !strings.HasSuffix(dog.PromptTemplate, filepath.Join(".gc", "system", "packs", "maintenance", "agents", "dog", "prompt.template.md")) {
+		t.Errorf("dog.PromptTemplate = %q, want maintenance dog prompt", dog.PromptTemplate)
 	}
 
 	packData, err := os.ReadFile(filepath.Join(cityPath, "pack.toml"))
@@ -5425,6 +5441,9 @@ prompt_template = "prompts/mayor.md"
 // rather than being reported as an error. Strict is for debugging typos
 // and template mistakes, not for rejecting valid minimal configs.
 func TestDoPrimeStrictAgentWithEmptyPromptTemplate(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	gcDir := filepath.Join(dir, ".gc")
 	if err := os.MkdirAll(gcDir, 0o755); err != nil {
@@ -5437,6 +5456,7 @@ name = "test-city"
 
 [[agent]]
 name = "mayor"
+max_active_sessions = 1
 `
 	if err := os.WriteFile(filepath.Join(dir, "city.toml"), []byte(toml), 0o644); err != nil {
 		t.Fatal(err)
@@ -5464,6 +5484,9 @@ name = "mayor"
 // silently swallows by returning "", which strict mode needs to surface
 // with the underlying stat reason.
 func TestDoPrimeStrictMissingTemplateFile(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	gcDir := filepath.Join(dir, ".gc")
 	if err := os.MkdirAll(gcDir, 0o755); err != nil {
@@ -5500,6 +5523,9 @@ prompt_template = "prompts/does-not-exist.md"
 }
 
 func TestDoPrimeStrictAbsoluteTemplatePath(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	gcDir := filepath.Join(dir, ".gc")
 	if err := os.MkdirAll(gcDir, 0o755); err != nil {
@@ -5545,6 +5571,9 @@ prompt_template = %q
 // substantial content. The absence of this test would let the missing-
 // file strict check quietly regress into a broader empty-render check.
 func TestDoPrimeStrictTemplateRendersLegitimatelyEmpty(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	gcDir := filepath.Join(dir, ".gc")
 	if err := os.MkdirAll(gcDir, 0o755); err != nil {
@@ -5597,6 +5626,9 @@ prompt_template = "prompts/mayor.md"
 // effects (persisting the session ID to .runtime/session_id) do NOT fire.
 // A failing strict invocation must not leave partial state behind.
 func TestDoPrimeStrictHookModeDoesNotPersistSessionOnFailure(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	gcDir := filepath.Join(dir, ".gc")
 	if err := os.MkdirAll(gcDir, 0o755); err != nil {
@@ -5639,6 +5671,9 @@ name = "mayor"
 // effects. A missing prompt_template is a strict failure, so it must not
 // leave behind a session id for the failed hook invocation.
 func TestDoPrimeStrictHookModeMissingTemplateDoesNotPersistSessionOnFailure(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	gcDir := filepath.Join(dir, ".gc")
 	if err := os.MkdirAll(gcDir, 0o755); err != nil {
@@ -5683,6 +5718,9 @@ prompt_template = "prompts/does-not-exist.md"
 // session-id persistence DOES fire — the deferral is not a regression of
 // hook behavior for the success path.
 func TestDoPrimeStrictHookModePersistsSessionOnSuccess(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	gcDir := filepath.Join(dir, ".gc")
 	if err := os.MkdirAll(gcDir, 0o755); err != nil {
@@ -5797,6 +5835,9 @@ prompt_template = "prompts/mayor.md"
 // Without this guard, the strict deferral silently drops session-id
 // persistence on the suspended-agent success path.
 func TestDoPrimeStrictHookModeOnSuspendedAgentPersistsSessionID(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	gcDir := filepath.Join(dir, ".gc")
 	if err := os.MkdirAll(gcDir, 0o755); err != nil {
@@ -6010,6 +6051,9 @@ func materializeBuiltinPrompts(cityPath string) error {
 }
 
 func TestDoPrimeHookPersistsSessionID(t *testing.T) {
+	clearGCEnv(t)
+	disableManagedDoltRecoveryForTest(t)
+
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".gc"), 0o755); err != nil {
 		t.Fatal(err)

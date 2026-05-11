@@ -8986,26 +8986,21 @@ func TestStartBeadsLifecycleManagedDeferredDoesNotRequireRuntimeState(t *testing
 	ln := listenOnRandomPort(t)
 	defer func() { _ = ln.Close() }()
 	port := ln.Addr().(*net.TCPAddr).Port
-	script := gcBeadsBdScriptPath(cityPath)
-	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	scriptBody := fmt.Sprintf(`#!/bin/sh
-	echo "$@" >> %q
-	if [ "$1" = "start" ]; then
-	  mkdir -p "$(dirname %q)"
+echo "$@" >> %q
+if [ "$1" = "start" ]; then
+  mkdir -p "$(dirname %q)"
 	  cat > %q <<'JSON'
 	{"running":true,"pid":%d,"port":%d,"data_dir":%q,"started_at":"2026-04-14T00:00:00Z"}
 	JSON
 	fi
-	if [ "$1" = "init" ]; then
-	  mkdir -p "$2/.beads"
-	fi
-	exit 0
+if [ "$1" = "init" ]; then
+  mkdir -p "$2/.beads"
+fi
+exit 0
 	`, callLog, providerState, providerState, os.Getpid(), port, filepath.Join(cityPath, ".beads", "dolt"))
-	if err := os.WriteFile(script, []byte(scriptBody), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	script := writeManagedBdTestScript(t, scriptBody)
+	writeExecStoreCityConfig(t, cityPath, "test-city", "", []config.Rig{{Name: "rig", Path: rigPath, Prefix: "rg"}})
 	seedDeferredManagedBeads(cityPath, cityPath, "tc", "hq")
 	seedDeferredManagedBeads(cityPath, rigPath, "rg", "rg")
 	if err := writeDoltRuntimeStateFile(providerState, doltRuntimeState{
@@ -9018,7 +9013,7 @@ func TestStartBeadsLifecycleManagedDeferredDoesNotRequireRuntimeState(t *testing
 		t.Fatal(err)
 	}
 
-	t.Setenv("GC_BEADS", "bd")
+	t.Setenv("GC_BEADS", "exec:"+script)
 	t.Setenv("GC_BEADS_SCOPE_ROOT", cityPath)
 	cfg := &config.City{
 		Workspace: config.Workspace{Name: "test-city"},
@@ -9132,21 +9127,24 @@ func TestStartBeadsLifecycleSkipsProviderForExternalHost(t *testing.T) {
 	// "start" should NOT be called (skipped by external host guard).
 	// "init" will be called but exits 2 (not needed).
 	callLog := filepath.Join(cityPath, "op-calls.log")
-	script := gcBeadsBdScriptPath(cityPath)
-	if err := os.MkdirAll(filepath.Dir(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(script, []byte("#!/bin/sh\necho \"$1\" >> "+callLog+"\nexit 2\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	script := writeManagedBdTestScript(t, "#!/bin/sh\necho \"$1\" >> "+callLog+"\nexit 2\n")
 	if err := os.MkdirAll(filepath.Join(cityPath, ".beads"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(cityPath, ".beads", "metadata.json"), []byte(`{"database":"dolt","backend":"dolt","dolt_mode":"server","dolt_database":"hq"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"), []byte(`[workspace]
+name = "test-city"
 
-	t.Setenv("GC_BEADS", "bd")
+[dolt]
+host = "mini2.hippo-tilapia.ts.net"
+port = 3307
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GC_BEADS", "exec:"+script)
 	t.Setenv("GC_BEADS_SCOPE_ROOT", cityPath)
 	t.Setenv("GC_DOLT_HOST", "operator-override.example.com")
 	t.Setenv("GC_DOLT_PORT", "5511")

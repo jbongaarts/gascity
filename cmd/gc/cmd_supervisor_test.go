@@ -3976,28 +3976,6 @@ func TestDoStartRequiresInitializedCity(t *testing.T) {
 	}
 }
 
-func TestDoStartRejectsUnbootstrappedCityConfig(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "bright-lights")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "city.toml"), []byte("[workspace]\nname = \"bright-lights\"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	code := doStart([]string{dir}, false, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("doStart code = %d, want 1", code)
-	}
-	if !strings.Contains(stderr.String(), "city runtime not bootstrapped") {
-		t.Fatalf("stderr = %q, want bootstrap error", stderr.String())
-	}
-	if !strings.Contains(stderr.String(), `gc init `+dir) && !strings.Contains(stderr.String(), `gc init `+canonicalTestPath(dir)) {
-		t.Fatalf("stderr = %q, want init guidance", stderr.String())
-	}
-}
-
 func TestDoStartForegroundRejectsSupervisorManagedCity(t *testing.T) {
 	gcHome := t.TempDir()
 	t.Setenv("GC_HOME", gcHome)

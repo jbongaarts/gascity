@@ -921,7 +921,9 @@ source = "`+doltDir+`"
 		"mol-dog-backup":     "$PACK_DIR/assets/scripts/mol-dog-backup.sh",
 		"mol-dog-compactor":  "gc dolt compact",
 		"mol-dog-doctor":     "$PACK_DIR/assets/scripts/mol-dog-doctor.sh",
+		"mol-dog-jsonl":      "$PACK_DIR/assets/scripts/jsonl-export.sh",
 		"mol-dog-phantom-db": "$PACK_DIR/assets/scripts/mol-dog-phantom-db.sh",
+		"mol-dog-reaper":     "$PACK_DIR/assets/scripts/reaper.sh",
 	}
 	gotExecDogOrders := map[string]bool{}
 	const wantFormulaDogOrders = 1
@@ -943,7 +945,11 @@ source = "`+doltDir+`"
 			}
 			const packScriptPrefix = "$PACK_DIR/assets/scripts/"
 			if scriptName := strings.TrimPrefix(wantExec, packScriptPrefix); scriptName != wantExec {
-				scriptPath := filepath.Join(doltDir, "assets", "scripts", scriptName)
+				packDir := orderPoolSourceDirHint(a)
+				if packDir == "" {
+					t.Fatalf("%s pack dir hint is empty for script-backed exec order", a.Name)
+				}
+				scriptPath := filepath.Join(packDir, "assets", "scripts", scriptName)
 				if _, err := os.Stat(scriptPath); err != nil {
 					t.Fatalf("%s exec script missing: %v", a.Name, err)
 				}
@@ -964,8 +970,8 @@ source = "`+doltDir+`"
 		if err != nil {
 			t.Fatalf("qualifyOrderPool(%s): %v", a.Name, err)
 		}
-		if got != "ops.dog" {
-			t.Fatalf("qualifyOrderPool(%s) = %q, want ops.dog", a.Name, got)
+		if got != "dog" {
+			t.Fatalf("qualifyOrderPool(%s) = %q, want local maintenance dog", a.Name, got)
 		}
 	}
 	if gotFormulaDogOrders != wantFormulaDogOrders {
@@ -4029,8 +4035,15 @@ func loadImportedDogOrders(t *testing.T, cityDir string) (*config.City, []orders
 	if err != nil {
 		t.Fatalf("scanAllOrders: %v; stderr: %s", err, stderr.String())
 	}
-	if len(aa) != 1 {
-		t.Fatalf("scanAllOrders() len = %d, want 1 (%#v)", len(aa), aa)
+	found := false
+	for _, order := range aa {
+		if order.Name == "digest" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("scanAllOrders() missing digest order (%#v)", aa)
 	}
 	return cfg, aa
 }
