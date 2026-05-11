@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/clock"
 	"github.com/gastownhall/gascity/internal/config"
@@ -304,6 +305,22 @@ type stopTarget struct {
 	order       int
 	resolved    bool
 	poolManaged bool
+}
+
+// lifecycleCorrelationID returns the identifier subscribers use to
+// correlate a SessionLifecyclePayload back to a session bead. Targets
+// constructed without a store (or whose session bead was already
+// retired before stop) can have an empty sessionID; the session_name
+// (stored in name) is always populated by the caller and is itself a
+// stable identifier that ResolveSessionID can resolve to a bead via
+// metadata.session_name. Returning the empty string here would violate
+// the SessionLifecyclePayload.SessionID "always present" contract — see
+// internal/api/event_payloads.go's docstring.
+func (t stopTarget) lifecycleCorrelationID() string {
+	if t.sessionID != "" {
+		return t.sessionID
+	}
+	return t.name
 }
 
 type stopResult struct {
@@ -2343,6 +2360,7 @@ func stopTargetsBounded(
 					stopped++
 					rec.Record(events.Event{
 						Type: events.SessionStopped, Actor: actor, Subject: result.target.subject,
+						Payload: api.SessionLifecyclePayloadJSON(result.target.lifecycleCorrelationID(), result.target.template, "stopped"),
 					})
 				}
 				logLifecycleWave(stderr, "stop", wave, waveStarted, 1)
@@ -2385,6 +2403,7 @@ func stopTargetsBounded(
 			stopped++
 			rec.Record(events.Event{
 				Type: events.SessionStopped, Actor: actor, Subject: result.target.subject,
+				Payload: api.SessionLifecyclePayloadJSON(result.target.lifecycleCorrelationID(), result.target.template, "stopped"),
 			})
 		}
 		logLifecycleWave(stderr, "stop", wave, waveStarted, len(waveTargets))
