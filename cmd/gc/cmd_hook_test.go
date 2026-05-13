@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -338,6 +339,30 @@ func TestHookPassesWorkQuery(t *testing.T) {
 	}
 	if receivedDir != "/tmp/work" {
 		t.Errorf("runner dir = %q, want %q", receivedDir, "/tmp/work")
+	}
+}
+
+func TestShellWorkQueryTimesOutPromptly(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+
+	oldTimeout := hookWorkQueryTimeout
+	hookWorkQueryTimeout = 50 * time.Millisecond
+	t.Cleanup(func() {
+		hookWorkQueryTimeout = oldTimeout
+	})
+
+	start := time.Now()
+	_, err := shellWorkQueryWithEnv("sleep 5", t.TempDir(), nil)
+	if err == nil {
+		t.Fatal("shellWorkQueryWithEnv(sleep) err = nil, want timeout")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("err = %v, want timeout diagnostic", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("shellWorkQueryWithEnv timeout elapsed %s, want under 1s", elapsed)
 	}
 }
 

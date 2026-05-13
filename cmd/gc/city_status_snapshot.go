@@ -72,7 +72,7 @@ func cityStatusStorePresent(cityPath string) bool {
 }
 
 func collectCityStatusSnapshot(sp runtime.Provider, cfg *config.City, cityPath string, store beads.Store, stderr io.Writer) cityStatusSnapshot {
-	return collectCityStatusSnapshotFromStoreSnapshot(sp, cfg, cityPath, store, loadStatusSessionSnapshot(store), stderr)
+	return collectCityStatusSnapshotFromStoreSnapshot(sp, cfg, cityPath, store, loadStatusSessionSnapshot(store, stderr), stderr)
 }
 
 func collectCityStatusSnapshotFromStoreSnapshot(
@@ -146,7 +146,7 @@ func collectCityStatusSnapshotFromStoreSnapshot(
 						QualifiedName: qualifiedInstance,
 						Scope:         scope,
 						Running:       obs.Running,
-						Suspended:     suspended || obs.Suspended,
+						Suspended:     suspended || obs.Suspended || target.suspended,
 						Pool:          nil,
 					},
 					SessionName: target.runtimeSessionName,
@@ -162,7 +162,7 @@ func collectCityStatusSnapshotFromStoreSnapshot(
 				if obs.Running {
 					snapshot.Summary.RunningAgents++
 				}
-				addRigCount(a.Dir, suspended || obs.Suspended)
+				addRigCount(a.Dir, suspended || obs.Suspended || target.suspended)
 			}
 			continue
 		}
@@ -175,7 +175,7 @@ func collectCityStatusSnapshotFromStoreSnapshot(
 				QualifiedName: a.QualifiedName(),
 				Scope:         scope,
 				Running:       obs.Running,
-				Suspended:     suspended || obs.Suspended,
+				Suspended:     suspended || obs.Suspended || target.suspended,
 			},
 			SessionName: target.runtimeSessionName,
 			GroupName:   a.QualifiedName(),
@@ -185,7 +185,7 @@ func collectCityStatusSnapshotFromStoreSnapshot(
 		if obs.Running {
 			snapshot.Summary.RunningAgents++
 		}
-		addRigCount(a.Dir, suspended || obs.Suspended)
+		addRigCount(a.Dir, suspended || obs.Suspended || target.suspended)
 	}
 
 	for _, r := range cfg.Rigs {
@@ -205,7 +205,7 @@ func collectCityStatusSnapshotFromStoreSnapshot(
 	for _, ns := range cfg.NamedSessions {
 		identity := ns.QualifiedName()
 		mode := ns.ModeOrDefault()
-		status := namedSessionStatusForCity(cityPath, cfg, store, snapshot.CityName, identity, mode, suspendedRigs)
+		status := namedSessionStatusForCity(cityPath, cfg, store, statusSnapshot, snapshot.CityName, identity, mode, suspendedRigs)
 		snapshot.NamedSessions = append(snapshot.NamedSessions, cityStatusNamedSession{
 			Identity: identity,
 			Status:   status,
@@ -220,6 +220,7 @@ func namedSessionStatusForCity(
 	cityPath string,
 	cfg *config.City,
 	store beads.Store,
+	statusSnapshot *sessionBeadSnapshot,
 	cityName string,
 	identity string,
 	mode string,
@@ -232,6 +233,15 @@ func namedSessionStatusForCity(
 		}
 	}
 	if store == nil {
+		return status
+	}
+	if statusSnapshot != nil {
+		if bead, ok := statusSnapshot.FindSessionBeadByNamedIdentity(identity); ok {
+			if state := strings.TrimSpace(bead.Metadata["state"]); state != "" {
+				return state
+			}
+			return "materialized"
+		}
 		return status
 	}
 
@@ -253,8 +263,11 @@ func namedSessionStatusForCity(
 	return "materialized"
 }
 
-func collectCitySessionCounts(cityPath string, store beads.Store, sp runtime.Provider, cfg *config.City) (StatusSummaryJSON, error) {
+func collectCitySessionCounts(cityPath string, store beads.Store, sp runtime.Provider, cfg *config.City, snapshot *sessionBeadSnapshot) (StatusSummaryJSON, error) {
 	summary := StatusSummaryJSON{}
+	if snapshot != nil {
+		return countCitySessionsFromSnapshot(snapshot), nil
+	}
 	if store == nil {
 		return summary, nil
 	}
@@ -283,6 +296,25 @@ func collectCitySessionCounts(cityPath string, store beads.Store, sp runtime.Pro
 		}
 	}
 	return summary, nil
+}
+
+func countCitySessionsFromSnapshot(snapshot *sessionBeadSnapshot) StatusSummaryJSON {
+	summary := StatusSummaryJSON{}
+	if snapshot == nil {
+		return summary
+	}
+	for _, bead := range snapshot.Open() {
+		if bead.Status == "closed" || !session.IsSessionBeadOrRepairable(bead) {
+			continue
+		}
+		switch sessionMetadataState(bead) {
+		case string(session.StateActive):
+			summary.ActiveSessions++
+		case string(session.StateSuspended):
+			summary.SuspendedSessions++
+		}
+	}
+	return summary
 }
 
 func cityStatusJSONFromSnapshot(snapshot cityStatusSnapshot, summary StatusSummaryJSON) StatusJSON {

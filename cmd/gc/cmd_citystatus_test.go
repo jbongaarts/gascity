@@ -117,6 +117,44 @@ func TestCityStatusReportsObservationErrors(t *testing.T) {
 	}
 }
 
+func TestCityStatusObservationTimesOut(t *testing.T) {
+	oldTimeout := statusObservationTimeout
+	statusObservationTimeout = 20 * time.Millisecond
+	t.Cleanup(func() {
+		statusObservationTimeout = oldTimeout
+	})
+
+	release := make(chan struct{})
+	defer close(release)
+	oldObserve := observeSessionTargetForStatus
+	observeSessionTargetForStatus = func(string, beads.Store, runtime.Provider, *config.City, string) (worker.LiveObservation, error) {
+		<-release
+		return worker.LiveObservation{Running: true}, nil
+	}
+	t.Cleanup(func() { observeSessionTargetForStatus = oldObserve })
+
+	var stderr bytes.Buffer
+	start := time.Now()
+	obs := observeSessionTargetWithWarning(
+		"gc status",
+		"/city",
+		nil,
+		runtime.NewFake(),
+		&config.City{},
+		statusObservationTarget{runtimeSessionName: "slow-session"},
+		&stderr,
+	)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("observeSessionTargetWithWarning elapsed %s, want bounded timeout", elapsed)
+	}
+	if obs.Running {
+		t.Fatal("observation should not report running after timeout")
+	}
+	if !strings.Contains(stderr.String(), "observing \"slow-session\" timed out") {
+		t.Fatalf("stderr = %q, want timeout warning", stderr.String())
+	}
+}
+
 func TestCityStatusSuspended(t *testing.T) {
 	sp := runtime.NewFake()
 	dops := newFakeDrainOps()
@@ -389,7 +427,7 @@ func TestCityStatusJSONReportsStoreOpenError(t *testing.T) {
 	}
 }
 
-func TestCityStatusJSONReportsCatalogListError(t *testing.T) {
+func TestCityStatusJSONContinuesAfterSessionSnapshotListError(t *testing.T) {
 	sp := runtime.NewFake()
 	oldOpen := openCityStoreAtForStatus
 	openCityStoreAtForStatus = func(string) (beads.Store, error) {
@@ -406,11 +444,15 @@ func TestCityStatusJSONReportsCatalogListError(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code := doCityStatusJSON(sp, cfg, cityPath, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("code = %d, want 1", code)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0; stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "gc status: building session catalog") || !strings.Contains(stderr.String(), "catalog unavailable") {
-		t.Fatalf("stderr = %q, want catalog list error", stderr.String())
+	if !strings.Contains(stderr.String(), "gc status: loading session snapshot") || !strings.Contains(stderr.String(), "catalog unavailable") {
+		t.Fatalf("stderr = %q, want session snapshot warning", stderr.String())
+	}
+	var status StatusJSON
+	if err := json.Unmarshal(stdout.Bytes(), &status); err != nil {
+		t.Fatalf("unmarshal: %v; output: %s", err, stdout.String())
 	}
 }
 
