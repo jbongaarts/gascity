@@ -48,13 +48,20 @@ Your formula: `mol-refinery-patrol`
 
 ## Startup
 
+Use `$GC_AGENT` as your canonical mailbox identity. The session harness
+(`internal/session/lifecycle.go:RuntimeEnvWithSessionContext`) guarantees
+`$GC_AGENT` is set for every live session — it falls back to the session
+name when no alias is configured. `$GC_ALIAS` can be empty or stale, which
+is how a refinery once self-polled for 13h42m with seven queued beads
+without catching the mismatch (upstream #1833).
+
 ```bash
 # Check for an in-progress patrol wisp
-gc bd list --assignee="$GC_ALIAS" --status=in_progress
+gc bd list --assignee="$GC_AGENT" --status=in_progress
 
 # If none found, pour one (root-only — no child step beads) and assign it
 WISP=$(gc bd mol wisp mol-refinery-patrol --root-only --var target_branch={{ .DefaultBranch }} --var rig_name={{ .RigName }} --var binding_prefix={{ .BindingPrefix }} --json | jq -r '.new_epic_id')
-gc bd update "$WISP" --assignee="$GC_ALIAS"
+gc bd update "$WISP" --assignee="$GC_AGENT"
 ```
 
 Then follow the formula. The step descriptions below are your instructions —
@@ -186,7 +193,7 @@ alert the witness, not `gc mail send`.
 |------------|----------------|
 | Pour next wisp | `gc bd mol wisp mol-refinery-patrol --root-only --var target_branch={{ .DefaultBranch }} --var rig_name={{ .RigName }} --var binding_prefix={{ .BindingPrefix }}` |
 | Burn current wisp | `gc bd mol burn <wisp-id> --force` |
-| Find assigned work | `gc bd list --assignee="$GC_ALIAS" --status=open` |
+| Find assigned work | `gc bd list --assignee="$GC_AGENT" --status=open` |
 | Snapshot event position | `gc events --seq` |
 | Wait for assignment | `gc events --watch --type=bead.updated --after=$SEQ` |
 | Read work metadata | `gc bd show $WORK --json \| jq '.[0].metadata'` |
