@@ -398,7 +398,9 @@ Run as a single chained command so the metadata write cannot be skipped
 when the close-reason already names the SHA. Both the `--set-metadata`
 write and the `gc bd close` are required — `merged_sha` and
 `merged_target` are the only forensic breadcrumbs tying a closed bead
-to its merge commit on `$TARGET`.
+to its merge commit on `$TARGET`. `--unset-metadata rejection_reason`
+clears any stale rejection field from an earlier rejected/reworked
+attempt before the successful close.
 
 ```bash
 MERGED_SHA=$(git rev-parse HEAD) && \
@@ -406,7 +408,8 @@ MERGED_SHORT=$(git rev-parse --short HEAD) && \
 gc bd update $WORK \
   --set-metadata merge_result=merged \
   --set-metadata merged_sha=$MERGED_SHA \
-  --set-metadata merged_target=$TARGET && \
+  --set-metadata merged_target=$TARGET \
+  --unset-metadata rejection_reason && \
 gc bd close $WORK --reason "Merged to $TARGET at $MERGED_SHORT"
 ```
 
@@ -535,14 +538,17 @@ Run as a single chained command so the metadata write cannot be skipped
 when the close-reason already names the PR. Both the `--set-metadata`
 write and the `gc bd close` are required — `pr_url` and `pr_number`
 are the only forensic breadcrumbs tying a closed bead to its pull
-request.
+request. `--unset-metadata rejection_reason` clears any stale rejection
+field from an earlier rejected/reworked attempt before the successful
+close.
 
 ```bash
 gc bd update $WORK \
   --set-metadata merge_result=pull_request \
   --set-metadata pr_url="$PR_URL" \
   --set-metadata pr_number="$PR_NUMBER" \
-  --set-metadata merged_target="$TARGET" && \
+  --set-metadata merged_target="$TARGET" \
+  --unset-metadata rejection_reason && \
 gc bd close $WORK --reason "Pull request ready: $PR_URL"
 ```
 

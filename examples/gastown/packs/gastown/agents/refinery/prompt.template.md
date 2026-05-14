@@ -115,6 +115,18 @@ On rebase conflict or test failure:
 A new polecat picks up the bead, sees `metadata.branch` and
 `metadata.rejection_reason`, rebases or redoes work, reassigns to refinery.
 
+**On the next merge of a previously-rejected bead, clear
+`rejection_reason` before `gc bd close`.** A bead carrying both a
+"closed merged" status and a stale `rejection_reason` is internally
+contradictory — downstream tooling that reads `metadata.rejection_reason`
+to surface "this bead failed" can't tell the rejection has been
+resolved. The formula's `merge-push` step chains `--unset-metadata
+rejection_reason` into each terminal `gc bd update` before `gc bd
+close`; do not split the chain, and do not skip the unset because the
+bead's previous rejection looks like ancient history. The cost of the
+unset is one CLI flag; the cost of leaving it set is a permanent
+contradictory record on the bead.
+
 ## Merge Strategy
 
 `metadata.merge_strategy` controls the terminal handoff:
