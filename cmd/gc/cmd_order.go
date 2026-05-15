@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"path/filepath"
 	"sort"
 	"time"
@@ -18,6 +19,8 @@ import (
 	"github.com/gastownhall/gascity/internal/orders"
 	"github.com/spf13/cobra"
 )
+
+var orderLogf = log.Printf
 
 func newOrderCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
@@ -595,8 +598,9 @@ func doOrderRunExecTracked(a orders.Order, cityPath string, cfg *config.City, st
 		return 1
 	}
 	tracking, err := store.Create(beads.Bead{
-		Title:  "order:" + scoped,
-		Labels: []string{"order-run:" + scoped, labelOrderTracking},
+		Title:     "order:" + scoped,
+		Labels:    []string{"order-run:" + scoped, labelOrderTracking},
+		Ephemeral: true,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "gc order run: creating exec tracking bead for %s: %v\n", scoped, err) //nolint:errcheck // best-effort stderr
@@ -678,22 +682,7 @@ func cmdOrderCheck(stdout, stderr io.Writer) int {
 // orderLastRunFn returns a LastRunFunc that queries BdStore for the most
 // recent bead labeled order-run:<name>. Returns zero time if never run.
 func orderLastRunFn(store beads.Store) orders.LastRunFunc {
-	return func(name string) (time.Time, error) {
-		label := "order-run:" + name
-		results, err := store.List(beads.ListQuery{
-			Label:         label,
-			Limit:         1,
-			IncludeClosed: true,
-			Sort:          beads.SortCreatedDesc,
-		})
-		if err != nil {
-			return time.Time{}, err
-		}
-		if len(results) == 0 {
-			return time.Time{}, nil
-		}
-		return results[0].CreatedAt, nil
-	}
+	return orders.LastRunFuncForStore(store)
 }
 
 // doOrderCheck evaluates triggers for all orders and prints a table.
@@ -879,13 +868,16 @@ func doOrderHistoryWithStoresResolver(name, rig string, aa []orders.Order, resol
 				Label:         label,
 				IncludeClosed: true,
 				Sort:          beads.SortCreatedDesc,
+				TierMode:      beads.TierBoth,
 			})
 			if err != nil {
 				fmt.Fprintf(stderr, "gc order history: %v\n", err) //nolint:errcheck // best-effort stderr
-				if i == 0 {
+				if i == 0 && len(results) == 0 {
 					return 1
 				}
-				continue
+				if len(results) == 0 {
+					continue
+				}
 			}
 			for _, b := range results {
 				key := a.ScopedName() + "\x00" + b.ID + "\x00" + b.CreatedAt.Format(time.RFC3339Nano) + "\x00" + b.Title
@@ -987,9 +979,13 @@ func bdCursor(store beads.Store, orderName string) (uint64, error) {
 		Label:         "order:" + orderName,
 		IncludeClosed: true,
 		Sort:          beads.SortCreatedDesc,
+		TierMode:      beads.TierBoth,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("listing event cursor beads for order %q: %w", orderName, err)
+		if len(beadList) == 0 {
+			return 0, fmt.Errorf("listing event cursor beads for order %q: %w", orderName, err)
+		}
+		orderLogf("gc order: event cursor lookup partially failed for %s: %v", orderName, err)
 	}
 	labelSets := make([][]string, len(beadList))
 	for i, b := range beadList {

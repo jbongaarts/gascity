@@ -422,6 +422,7 @@ func orderHistoryBeadsAcrossStoreInfosCachedFirst(infos []workflowStoreInfo, sco
 			Limit:         limit,
 			IncludeClosed: true,
 			Sort:          beads.SortCreatedDesc,
+			TierMode:      beads.TierBoth,
 		}
 		var (
 			rows []beads.Bead
@@ -437,11 +438,13 @@ func orderHistoryBeadsAcrossStoreInfosCachedFirst(infos []workflowStoreInfo, sco
 			rows, err = info.store.List(query)
 		}
 		if err != nil {
-			if i == 0 {
+			if i == 0 && len(rows) == 0 {
 				return nil, err
 			}
 			log.Printf("api: order history list failed for %s: %v", info.ref, err)
-			continue
+			if len(rows) == 0 {
+				continue
+			}
 		}
 		for _, row := range rows {
 			if !beforeTime.IsZero() && !row.CreatedAt.Before(beforeTime) {
@@ -483,13 +486,16 @@ func orderHistoryBeadsAcrossStoreInfos(infos []workflowStoreInfo, scopedName str
 			Limit:         limit,
 			IncludeClosed: true,
 			Sort:          beads.SortCreatedDesc,
+			TierMode:      beads.TierBoth,
 		})
 		if err != nil {
-			if i == 0 {
+			if i == 0 && len(rows) == 0 {
 				return nil, err
 			}
 			log.Printf("api: order history list failed for %s: %v", info.ref, err)
-			continue
+			if len(rows) == 0 {
+				continue
+			}
 		}
 		for _, row := range rows {
 			if !beforeTime.IsZero() && !row.CreatedAt.Before(beforeTime) {
