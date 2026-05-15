@@ -334,6 +334,11 @@ func seedDeferredManagedBeads(cityPath, dir, prefix, doltDatabase string) {
 }
 
 func seedDeferredManagedBeadsErr(cityPath, dir, prefix, doltDatabase string) error {
+	if usesPostgres, err := scopeUsesPostgresBackendForInit(cityPath, dir); err != nil {
+		return err
+	} else if usesPostgres {
+		return nil
+	}
 	if state, ok, err := desiredScopeDoltConfigStateForInit(cityPath, dir, prefix); err != nil {
 		return err
 	} else if ok {
@@ -383,6 +388,11 @@ func normalizeCanonicalBdScopeFilesForInit(cityPath, dir, prefix, doltDatabase s
 	if !cityUsesBdStoreContract(cityPath) {
 		return nil
 	}
+	if usesPostgres, err := scopeUsesPostgresBackendForInit(cityPath, dir); err != nil {
+		return err
+	} else if usesPostgres {
+		return nil
+	}
 	if state, ok, err := desiredScopeDoltConfigStateForInit(cityPath, dir, prefix); err != nil {
 		return err
 	} else if ok {
@@ -406,6 +416,14 @@ func normalizeCanonicalBdScopeFilesForInit(cityPath, dir, prefix, doltDatabase s
 // init the directory, then install event hooks. The ordering matters
 // because init (bd init) may recreate .beads/ and wipe existing hooks.
 func initAndHookDir(cityPath, dir, prefix string) error {
+	if usesPostgres, err := scopeUsesPostgresBackendForInit(cityPath, dir); err != nil {
+		return err
+	} else if usesPostgres {
+		if err := installBeadHooks(dir); err != nil {
+			return fmt.Errorf("install hooks at %s: %w", dir, err)
+		}
+		return nil
+	}
 	doltDatabase := canonicalScopeDoltDatabase(cityPath, dir, prefix)
 	if err := normalizeCanonicalBdScopeFilesForInit(cityPath, dir, prefix, doltDatabase); err != nil {
 		return err
@@ -429,6 +447,58 @@ func initAndHookDir(cityPath, dir, prefix string) error {
 		return fmt.Errorf("install hooks at %s: %w", dir, err)
 	}
 	return nil
+}
+
+func scopeUsesPostgresBackendForInit(cityPath, dir string) (bool, error) {
+	if !cityUsesBdStoreContract(cityPath) {
+		return false, nil
+	}
+	path := scopeMetadataJSONPath(dir)
+	state, ok, err := contract.LoadMetadataState(fsys.OSFS{}, path)
+	if err != nil {
+		if allowLegacyDoltMetadataRepair(fsys.OSFS{}, path, err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if ok {
+		switch state.Backend {
+		case "postgres":
+			return true, nil
+		case "dolt":
+			return false, nil
+		}
+	}
+	_, usesPostgres, err := postgresMetadataForScope(cityPath, dir)
+	return usesPostgres, err
+}
+
+func allowLegacyDoltMetadataRepair(fs fsys.FS, path string, err error) bool {
+	var parseErr *contract.MetadataParseError
+	if !errors.As(err, &parseErr) {
+		return false
+	}
+	data, readErr := fs.ReadFile(path)
+	if readErr != nil {
+		return false
+	}
+	var raw struct {
+		Backend          string `json:"backend"`
+		PostgresHost     string `json:"postgres_host"`
+		PostgresPort     string `json:"postgres_port"`
+		PostgresUser     string `json:"postgres_user"`
+		PostgresDatabase string `json:"postgres_database"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(raw.Backend), "legacy") {
+		return false
+	}
+	return strings.TrimSpace(raw.PostgresHost) == "" &&
+		strings.TrimSpace(raw.PostgresPort) == "" &&
+		strings.TrimSpace(raw.PostgresUser) == "" &&
+		strings.TrimSpace(raw.PostgresDatabase) == ""
 }
 
 func shouldRetryExecBdInit(err error) bool {
@@ -479,12 +549,16 @@ func ensureBeadsProvider(cityPath string) error {
 
 		script := strings.TrimPrefix(provider, "exec:")
 		managedBDProvider := samePath(script, gcBeadsBdScriptPath(cityPath))
-		if err := runProviderOpWithEnv(script, providerLifecycleProcessEnv(cityPath, provider), "start"); err != nil {
+		providerEnv, envErr := providerLifecycleProcessEnvWithError(cityPath, provider)
+		if envErr != nil {
+			return envErr
+		}
+		if err := runProviderOpWithEnv(script, providerEnv, "start"); err != nil {
 			// Managed bd startup occasionally reports a start error even though
 			// the Dolt server is already live. If the follow-up health probe
 			// succeeds, prefer the actual server state over the start error.
 			if managedBDProvider {
-				if healthErr := runProviderOpWithEnv(script, providerLifecycleProcessEnv(cityPath, provider), "health"); healthErr == nil {
+				if healthErr := runProviderOpWithEnv(script, providerEnv, "health"); healthErr == nil {
 					if err := publishManagedDoltRuntimeStateIfOwned(cityPath); err != nil {
 						return err
 					}
@@ -513,7 +587,11 @@ func shutdownBeadsProvider(cityPath string) error {
 			return clearManagedDoltRuntimeStateIfOwned(cityPath)
 		}
 		script := strings.TrimPrefix(provider, "exec:")
-		if err := runProviderOpWithEnv(script, providerLifecycleProcessEnv(cityPath, provider), "stop"); err != nil {
+		providerEnv, err := providerLifecycleProcessEnvWithError(cityPath, provider)
+		if err != nil {
+			return err
+		}
+		if err := runProviderOpWithEnv(script, providerEnv, "stop"); err != nil {
 			return err
 		}
 		if err := clearManagedDoltRuntimeStateIfOwned(cityPath); err != nil {
@@ -551,7 +629,10 @@ func initBeadsForDir(cityPath, dir, prefix, doltDatabase string) error {
 		}
 		script := strings.TrimPrefix(provider, "exec:")
 		if execProviderUsesCanonicalBdScopeFiles(provider) && !execProviderNeedsScopedDoltInit(provider) {
-			baseEnv := providerLifecycleProcessEnv(cityPath, provider)
+			baseEnv, err := providerLifecycleProcessEnvWithError(cityPath, provider)
+			if err != nil {
+				return err
+			}
 			overrides := map[string]string{
 				"BEADS_DIR": filepath.Join(dir, ".beads"),
 			}
@@ -588,7 +669,10 @@ func initBeadsForDir(cityPath, dir, prefix, doltDatabase string) error {
 			return finalizeCanonicalBdScopeInit(cityPath, dir, prefix, canonicalDoltDatabase)
 		}
 		if !execProviderNeedsScopedDoltInit(provider) {
-			baseEnv := cityRuntimeProcessEnv(cityPath)
+			baseEnv, err := cityRuntimeProcessEnvWithError(cityPath)
+			if err != nil {
+				return err
+			}
 			if strings.TrimSpace(cityPath) == "" {
 				baseEnv = os.Environ()
 			}
@@ -729,7 +813,10 @@ func healthBeadsProvider(cityPath string) error {
 		defer release()
 
 		script := strings.TrimPrefix(provider, "exec:")
-		providerEnv := providerLifecycleProcessEnv(cityPath, provider)
+		providerEnv, err := providerLifecycleProcessEnvWithError(cityPath, provider)
+		if err != nil {
+			return err
+		}
 		if err := runProviderOpWithEnv(script, providerEnv, "health"); err != nil {
 			if providerUsesBdStoreContract(provider) && isExternalDolt(cityPath) {
 				return err
@@ -1046,6 +1133,13 @@ func ensureCanonicalScopeMetadata(fs fsys.FS, scopeRoot, doltDatabase string, pr
 	path := filepath.Join(scopeRoot, ".beads", "metadata.json")
 	preserveReservedExisting := false
 	if preserveExisting {
+		if existing, ok, err := contract.LoadMetadataState(fs, path); err != nil {
+			if !allowLegacyDoltMetadataRepair(fs, path, err) {
+				return err
+			}
+		} else if ok && existing.Backend == "postgres" {
+			return nil
+		}
 		if existing, ok, err := contract.ReadDoltDatabase(fs, path); err != nil {
 			return err
 		} else if ok && strings.TrimSpace(existing) != "" {
@@ -1105,16 +1199,24 @@ func normalizeCanonicalBdScopeFiles(cityPath string, cfg *config.City, warns ...
 	}
 	resolveRigPaths(cityPath, cfg.Rigs)
 	if scopeUsesManagedBdStoreContract(cityPath, cityPath) {
-		if err := ensureCanonicalScopeMetadataForInit(fsys.OSFS{}, cityPath, defaultScopeDoltDatabase(cityPath, cityPath, config.EffectiveHQPrefix(cfg))); err != nil {
-			return fmt.Errorf("canonicalizing city metadata: %w", err)
+		if usesPostgres, err := scopeUsesPostgresBackendForInit(cityPath, cityPath); err != nil {
+			return fmt.Errorf("classifying city backend: %w", err)
+		} else if !usesPostgres {
+			if err := ensureCanonicalScopeMetadataForInit(fsys.OSFS{}, cityPath, defaultScopeDoltDatabase(cityPath, cityPath, config.EffectiveHQPrefix(cfg))); err != nil {
+				return fmt.Errorf("canonicalizing city metadata: %w", err)
+			}
 		}
 	}
 	for i := range cfg.Rigs {
 		if !rigUsesManagedBdStoreContract(cityPath, cfg.Rigs[i]) {
 			continue
 		}
-		if err := ensureCanonicalScopeMetadataForInit(fsys.OSFS{}, cfg.Rigs[i].Path, defaultScopeDoltDatabase(cityPath, cfg.Rigs[i].Path, cfg.Rigs[i].EffectivePrefix())); err != nil {
-			return fmt.Errorf("canonicalizing rig %q metadata: %w", cfg.Rigs[i].Name, err)
+		if usesPostgres, err := scopeUsesPostgresBackendForInit(cityPath, cfg.Rigs[i].Path); err != nil {
+			return fmt.Errorf("classifying rig %q backend: %w", cfg.Rigs[i].Name, err)
+		} else if !usesPostgres {
+			if err := ensureCanonicalScopeMetadataForInit(fsys.OSFS{}, cfg.Rigs[i].Path, defaultScopeDoltDatabase(cityPath, cfg.Rigs[i].Path, cfg.Rigs[i].EffectivePrefix())); err != nil {
+				return fmt.Errorf("canonicalizing rig %q metadata: %w", cfg.Rigs[i].Name, err)
+			}
 		}
 	}
 	if err := syncConfiguredDoltPortFiles(cityPath, cfg.Dolt, config.EffectiveHQPrefix(cfg), cfg.Rigs, warn); err != nil {
@@ -1439,7 +1541,11 @@ func runProviderProbe(script, cityPath, provider string) bool {
 	cmd.WaitDelay = 2 * time.Second
 	prepareProviderOpCommand(cmd)
 	if cityPath != "" {
-		cmd.Env = providerLifecycleProcessEnv(cityPath, provider)
+		env, err := providerLifecycleProcessEnvWithError(cityPath, provider)
+		if err != nil {
+			return false
+		}
+		cmd.Env = env
 	}
 	return cmd.Run() == nil
 }
@@ -1459,14 +1565,17 @@ func providerLifecycleDoltPathEnv(cityPath string) []string {
 	}
 }
 
-func providerLifecycleProcessEnv(cityPath, provider string) []string {
+func providerLifecycleProcessEnvWithError(cityPath, provider string) ([]string, error) {
 	if strings.TrimSpace(cityPath) == "" {
-		return nil
+		return nil, nil
 	}
 	cityPath = normalizePathForCompare(cityPath)
-	env := cityRuntimeProcessEnv(cityPath)
+	env, err := cityRuntimeProcessEnvWithError(cityPath)
+	if err != nil {
+		return nil, err
+	}
 	if !providerUsesBdStoreContract(provider) {
-		return env
+		return env, nil
 	}
 	for _, key := range []string{
 		"GC_PACK_STATE_DIR",
@@ -1512,7 +1621,7 @@ func providerLifecycleProcessEnv(cityPath, provider string) []string {
 			env = append(env, loglevelPrefix+val)
 		}
 	}
-	return env
+	return env, nil
 }
 
 // acquireProviderSemaphore returns a per-city semaphore channel and waits
@@ -1572,7 +1681,11 @@ func runProviderOp(script, cityPath string, args ...string) error {
 	if cityPath == "" {
 		return runProviderOpWithEnv(script, nil, args...)
 	}
-	return runProviderOpWithEnv(script, cityRuntimeProcessEnv(cityPath), args...)
+	env, err := cityRuntimeProcessEnvWithError(cityPath)
+	if err != nil {
+		return err
+	}
+	return runProviderOpWithEnv(script, env, args...)
 }
 
 func runProviderOpWithEnv(script string, environ []string, args ...string) error {
