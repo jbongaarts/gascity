@@ -1758,8 +1758,11 @@ func sessionBeadConfigAgent(cfgAgent *config.Agent, qualifiedName string) *confi
 	return &instanceAgent
 }
 
-func claimPoolSlot(cfgAgent *config.Agent, sessionBead beads.Bead, used map[int]bool) int {
-	if slot := existingPoolSlot(cfgAgent, sessionBead); slot > 0 && !used[slot] {
+func claimPoolSlotWithConfig(cfg *config.City, cfgAgent *config.Agent, sessionBead beads.Bead, used map[int]bool) int {
+	if slot := existingPoolSlotWithConfig(cfg, cfgAgent, sessionBead); slot > 0 {
+		if used[slot] {
+			return 0
+		}
 		used[slot] = true
 		return slot
 	}
@@ -1856,6 +1859,16 @@ func inBoundsPoolSlot(cfgAgent *config.Agent, slot int) bool {
 	return true
 }
 
+func usablePoolIdentitySlot(cfgAgent *config.Agent, slot int) bool {
+	if slot <= 0 {
+		return false
+	}
+	if !poolSlotHasConfiguredBound(cfgAgent) {
+		return true
+	}
+	return inBoundsPoolSlot(cfgAgent, slot)
+}
+
 func existingPoolSlotWithConfig(cfg *config.City, cfgAgent *config.Agent, sessionBead beads.Bead) int {
 	if cfgAgent == nil {
 		return 0
@@ -1869,20 +1882,20 @@ func existingPoolSlotWithConfig(cfg *config.City, cfgAgent *config.Agent, sessio
 	}
 	if sessionBead.Metadata["pool_slot"] != "" {
 		if slot, err := strconv.Atoi(strings.TrimSpace(sessionBead.Metadata["pool_slot"])); err == nil && slot > 0 {
-			if agentSlot > 0 && agentSlot == aliasSlot && agentSlot != slot {
+			if agentSlot > 0 && agentSlot != slot && usablePoolIdentitySlot(cfgAgent, agentSlot) {
 				return agentSlot
 			}
 			if !storedTemplateMatches && agentSlot == 0 && aliasSlot == 0 {
 				return 0
 			}
 			if !inBoundsPoolSlot(cfgAgent, slot) {
-				if agentSlot > 0 {
+				if usablePoolIdentitySlot(cfgAgent, agentSlot) {
 					return agentSlot
 				}
-				if aliasSlot > 0 {
+				if usablePoolIdentitySlot(cfgAgent, aliasSlot) {
 					return aliasSlot
 				}
-				if sessionNameSlot > 0 {
+				if usablePoolIdentitySlot(cfgAgent, sessionNameSlot) {
 					return sessionNameSlot
 				}
 				if poolSlotHasConfiguredBound(cfgAgent) {
@@ -1893,13 +1906,13 @@ func existingPoolSlotWithConfig(cfg *config.City, cfgAgent *config.Agent, sessio
 		}
 	}
 	if poolSlotHasConfiguredBound(cfgAgent) {
-		if agentSlot > 0 && !inBoundsPoolSlot(cfgAgent, agentSlot) {
+		if !usablePoolIdentitySlot(cfgAgent, agentSlot) {
 			agentSlot = 0
 		}
-		if aliasSlot > 0 && !inBoundsPoolSlot(cfgAgent, aliasSlot) {
+		if !usablePoolIdentitySlot(cfgAgent, aliasSlot) {
 			aliasSlot = 0
 		}
-		if sessionNameSlot > 0 && !inBoundsPoolSlot(cfgAgent, sessionNameSlot) {
+		if !usablePoolIdentitySlot(cfgAgent, sessionNameSlot) {
 			sessionNameSlot = 0
 		}
 	}
@@ -1943,7 +1956,10 @@ func selectOrCreatePoolSessionBead(
 	}
 	// Resume tier: reuse the session that has in-progress work assigned.
 	if preferred != nil && preferred.ID != "" && !used[preferred.ID] && !isFailedCreateSessionBead(*preferred) {
-		slot := claimPoolSlot(cfgAgent, *preferred, usedSlots)
+		slot := claimPoolSlotWithConfig(bp.city, cfgAgent, *preferred, usedSlots)
+		if slot == 0 {
+			return beads.Bead{}, 0, fmt.Errorf("pool session %s concrete slot already claimed", preferred.ID)
+		}
 		return *preferred, slot, nil
 	}
 	// Reuse an existing active/creating session bead. Skip drained, closed,
@@ -1978,11 +1994,14 @@ func selectOrCreatePoolSessionBead(
 			continue
 		}
 		if desiredName := strings.TrimSpace(bead.Metadata["session_name"]); desiredName != "" {
-			slot := claimPoolSlot(cfgAgent, bead, usedSlots)
+			slot := claimPoolSlotWithConfig(bp.city, cfgAgent, bead, usedSlots)
+			if slot == 0 {
+				continue
+			}
 			return bead, slot, nil
 		}
 	}
-	slot := claimPoolSlot(cfgAgent, beads.Bead{}, usedSlots)
+	slot := claimPoolSlotWithConfig(bp.city, cfgAgent, beads.Bead{}, usedSlots)
 	_, qualifiedInstance := poolInstanceIdentity(cfgAgent, slot, bp.stderr)
 	bead, err := createPoolSessionBeadWithGuardedAlias(bp, template, qualifiedInstance, slot)
 	if err != nil {

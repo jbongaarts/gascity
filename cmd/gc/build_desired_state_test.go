@@ -4637,6 +4637,26 @@ func TestBuildDesiredState_DoesNotPreserveOutOfBoundsBoundedPoolSlotWithoutIdent
 	}
 }
 
+func TestBuildDesiredState_PrefersInBoundsPoolSlotOverOutOfBoundsAgentName(t *testing.T) {
+	cfg := &config.City{
+		Agents: []config.Agent{
+			{Name: "worker", Dir: "frontend", MaxActiveSessions: intPtr(5)},
+		},
+	}
+	cfgAgent := &cfg.Agents[0]
+	bead := beads.Bead{
+		Metadata: map[string]string{
+			"template":   "frontend/worker",
+			"pool_slot":  "2",
+			"agent_name": "frontend/worker-99",
+		},
+	}
+
+	if slot := existingPoolSlotWithConfig(cfg, cfgAgent, bead); slot != 2 {
+		t.Fatalf("existingPoolSlotWithConfig(in-bounds pool_slot, out-of-bounds agent_name) = %d, want 2", slot)
+	}
+}
+
 func TestBuildDesiredState_DoesNotRecoverOutOfBoundsAliasOnlyBoundedPoolSlot(t *testing.T) {
 	cityPath := t.TempDir()
 	store := beads.NewMemStore()
@@ -4665,7 +4685,7 @@ func TestBuildDesiredState_DoesNotRecoverOutOfBoundsAliasOnlyBoundedPoolSlot(t *
 	}
 }
 
-func TestClaimPoolSlot_PreservesStampedOutOfBoundsLiveIdentity(t *testing.T) {
+func TestExistingPoolSlot_PreservesStampedOutOfBoundsLiveIdentity(t *testing.T) {
 	cfgAgent := &config.Agent{Name: "worker", Dir: "frontend", MaxActiveSessions: intPtr(5)}
 	bead := beads.Bead{
 		Metadata: map[string]string{
@@ -4677,10 +4697,6 @@ func TestClaimPoolSlot_PreservesStampedOutOfBoundsLiveIdentity(t *testing.T) {
 
 	if slot := existingPoolSlot(cfgAgent, bead); slot != 7 {
 		t.Fatalf("existingPoolSlot(stamped live slot) = %d, want 7", slot)
-	}
-	used := map[int]bool{}
-	if slot := claimPoolSlot(cfgAgent, bead, used); slot != 7 {
-		t.Fatalf("claimPoolSlot(stamped live slot) = %d, want 7", slot)
 	}
 }
 
@@ -5049,6 +5065,89 @@ func TestSelectOrCreatePoolSessionBead_SkipsDrained(t *testing.T) {
 	}
 	if slot != 1 {
 		t.Fatalf("fresh create slot = %d, want 1", slot)
+	}
+}
+
+func TestSelectOrCreatePoolSessionBead_PrefersConcreteAgentSlotOverStalePoolMetadata(t *testing.T) {
+	store := beads.NewMemStore()
+	poisoned, err := store.Create(beads.Bead{
+		Title:  "frontend/worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"template":       "frontend/worker",
+			"agent_name":     "frontend/worker-3",
+			"alias":          "backend/worker-4",
+			"pool_slot":      "4",
+			"session_name":   "s-poisoned",
+			"pool_managed":   "true",
+			"session_origin": "ephemeral",
+			"state":          "asleep",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.City{Agents: []config.Agent{
+		{Dir: "frontend", Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(10)},
+		{Dir: "backend", Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(10)},
+	}}
+	cfgAgent := &cfg.Agents[0]
+	bp := &agentBuildParams{
+		city:         cfg,
+		beadStore:    store,
+		sessionBeads: newSessionBeadSnapshot([]beads.Bead{poisoned}),
+		agents:       cfg.Agents,
+	}
+
+	result, slot, err := selectOrCreatePoolSessionBead(bp, cfgAgent, "frontend/worker", &poisoned, map[string]bool{}, map[int]bool{})
+	if err != nil {
+		t.Fatalf("selectOrCreatePoolSessionBead: %v", err)
+	}
+	if result.ID != poisoned.ID {
+		t.Fatalf("selected bead %q, want poisoned preferred bead %q", result.ID, poisoned.ID)
+	}
+	if slot != 3 {
+		t.Fatalf("slot = %d, want concrete agent_name slot 3 over stale pool_slot/alias", slot)
+	}
+}
+
+func TestSelectOrCreatePoolSessionBead_DoesNotRetagDuplicateConcreteSlot(t *testing.T) {
+	store := beads.NewMemStore()
+	duplicate, err := store.Create(beads.Bead{
+		Title:  "kimi",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel},
+		Metadata: map[string]string{
+			"template":       "kimi",
+			"agent_name":     "kimi-9",
+			"alias":          "kimi-15",
+			"pool_slot":      "9",
+			"session_name":   "workflows__kimi-mc-duplicate",
+			"pool_managed":   "true",
+			"session_origin": "ephemeral",
+			"state":          "creating",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.City{Agents: []config.Agent{
+		{Name: "kimi", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(20)},
+	}}
+	bp := &agentBuildParams{
+		city:         cfg,
+		beadStore:    store,
+		sessionBeads: newSessionBeadSnapshot([]beads.Bead{duplicate}),
+		agents:       cfg.Agents,
+	}
+
+	_, _, err = selectOrCreatePoolSessionBead(bp, &cfg.Agents[0], "kimi", &duplicate, map[string]bool{}, map[int]bool{9: true})
+	if err == nil {
+		t.Fatal("selectOrCreatePoolSessionBead returned nil error, want duplicate slot rejection")
+	}
+	if !strings.Contains(err.Error(), "concrete slot already claimed") {
+		t.Fatalf("error = %v, want concrete slot already claimed", err)
 	}
 }
 
