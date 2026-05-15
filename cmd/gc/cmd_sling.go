@@ -420,8 +420,8 @@ func findRigByPrefix(cfg *config.City, prefix string) (config.Rig, bool) {
 // beadPrefix returns the rig prefix for beadID, preferring the longest
 // configured prefix when cfg is non-nil. Pass cfg whenever the caller
 // needs hyphenated rig prefixes (e.g. "agent-diagnostics-hnn") to
-// resolve correctly; otherwise the underlying sling.BeadPrefix's
-// first-dash split is used.
+// resolve correctly; otherwise sling.BeadPrefix uses a config-free
+// last-hyphen heuristic with prose fallback.
 func beadPrefix(cfg *config.City, beadID string) string {
 	return sling.BeadPrefixForCity(cfg, beadID)
 }
@@ -1792,6 +1792,9 @@ func looksLikeBeadID(s string) bool {
 	return looksLikeBeadIDSuffix(baseSuffix)
 }
 
+// looksLikeBeadIDSuffix is the CLI's config-free inline-text heuristic. It is
+// deliberately stricter than sling's configured-prefix suffix gate so longer
+// all-letter prose still creates inline work instead of being routed as an ID.
 func looksLikeBeadIDSuffix(baseSuffix string) bool {
 	if len(baseSuffix) <= 4 {
 		return true
