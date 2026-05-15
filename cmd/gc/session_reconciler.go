@@ -899,10 +899,10 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 		if dops != nil {
 			if acked, _ := dops.isDrainAcked(name); acked {
 				if !alive && staleOrLegacyDrainAckBeforeStart(*session, sp, name) {
-					clearReconcilerDrainAckMetadata(sp, name)
+					_ = clearReconcilerDrainAckMetadata(sp, name)
 				} else {
 					if staleReconcilerDrainAck(*session, sp, name) {
-						clearReconcilerDrainAckMetadata(sp, name)
+						_ = clearReconcilerDrainAckMetadata(sp, name)
 						if trace != nil {
 							trace.recordDecision("reconciler.session.drain_ack", tp.TemplateName, name, "stale_generation", "clear", nil, nil, "")
 						}
@@ -923,7 +923,7 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 							}
 							drainCancelled := cancelSessionConfigDriftDrain(*session, sp, dt)
 							if !drainCancelled {
-								clearReconcilerDrainAckMetadata(sp, name)
+								_ = clearReconcilerDrainAckMetadata(sp, name)
 							}
 							if trace != nil {
 								trace.recordDecision("reconciler.session.drain_ack", tp.TemplateName, name, "config_drift_attached", "cancel_reconciler_ack", traceRecordPayload{
@@ -935,7 +935,7 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 						if driftKey != "" && recentlyDeferredSessionAttachedConfigDrift(*session, clk, driftKey) {
 							drainCancelled := cancelSessionConfigDriftDrain(*session, sp, dt)
 							if !drainCancelled {
-								clearReconcilerDrainAckMetadata(sp, name)
+								_ = clearReconcilerDrainAckMetadata(sp, name)
 							}
 							if trace != nil {
 								trace.recordDecision("reconciler.session.drain_ack", tp.TemplateName, name, "config_drift_recently_attached", "cancel_reconciler_ack", traceRecordPayload{
@@ -1140,11 +1140,7 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 			if template != "" && storedHash != "" {
 				cfgAgent := findAgentByTemplate(cfg, template)
 				if cfgAgent != nil {
-					agentCfg := templateParamsToConfig(tp)
-					// Apply template_overrides using the same resolution as
-					// prepareSessionStart: merge defaults + overrides, then
-					// replaceSchemaFlags to strip and re-add all schema flags.
-					applyTemplateOverridesToConfig(&agentCfg, *session, tp)
+					agentCfg := sessionCoreConfigForHash(tp, *session)
 					currentHash := runtime.CoreFingerprint(agentCfg)
 					if storedHash != currentHash {
 						fmt.Fprintf(stderr, "config-drift %s: stored=%s current=%s cmd=%q\n", name, storedHash[:12], currentHash[:12], agentCfg.Command) //nolint:errcheck
@@ -1337,7 +1333,7 @@ func reconcileSessionBeadsTracedWithNamedDemand(
 			storedHash := session.Metadata["started_config_hash"]
 			if template != "" && storedHash != "" {
 				if cfgAgent := findAgentByTemplate(cfg, template); cfgAgent != nil {
-					agentCfg := templateParamsToConfig(tp)
+					agentCfg := sessionCoreConfigForHash(tp, *session)
 					currentHash := runtime.CoreFingerprint(agentCfg)
 					if storedHash != currentHash {
 						var storedBreakdown map[string]string
@@ -2056,8 +2052,7 @@ func sessionConfigDriftKey(session beads.Bead, cfg *config.City, tp TemplatePara
 	if findAgentByTemplate(cfg, template) == nil {
 		return ""
 	}
-	agentCfg := templateParamsToConfig(tp)
-	applyTemplateOverridesToConfig(&agentCfg, session, tp)
+	agentCfg := sessionCoreConfigForHash(tp, session)
 	currentHash := runtime.CoreFingerprint(agentCfg)
 	if storedHash == currentHash {
 		return ""
