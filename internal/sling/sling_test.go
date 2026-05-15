@@ -1404,6 +1404,64 @@ func TestSlingRouteBeadWithTypedRouter(t *testing.T) {
 	}
 }
 
+func TestSlingAttachFormulaRoutesMoleculeRootWithTypedRouter(t *testing.T) {
+	router := &fakeBeadRouter{}
+	cfg := &config.City{Workspace: config.Workspace{Name: "test"}}
+	deps := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+	deps.Router = router
+	b, _ := deps.Store.Create(beads.Bead{Title: "work", Type: "task"})
+
+	s, err := New(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := config.Agent{Name: "mayor", MaxActiveSessions: intPtr(1)}
+	result, err := s.AttachFormula(context.Background(), "code-review", b.ID, a, FormulaOpts{})
+	if err != nil {
+		t.Fatalf("AttachFormula: %v", err)
+	}
+
+	if len(router.routed) != 2 {
+		t.Fatalf("got %d route calls, want 2", len(router.routed))
+	}
+	if router.routed[0].BeadID != b.ID {
+		t.Fatalf("first routed BeadID = %q, want %q", router.routed[0].BeadID, b.ID)
+	}
+	if router.routed[1].BeadID != result.WispRootID {
+		t.Fatalf("second routed BeadID = %q, want molecule root %q", router.routed[1].BeadID, result.WispRootID)
+	}
+}
+
+func TestSlingRouteBeadDefaultFormulaRoutesMoleculeRootWithTypedRouter(t *testing.T) {
+	router := &fakeBeadRouter{}
+	cfg := &config.City{Workspace: config.Workspace{Name: "test"}}
+	deps := testDeps(cfg, runtime.NewFake(), newFakeRunner().run)
+	deps.Router = router
+	deps.Store = seededStore("BL-42")
+
+	s, err := New(deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := config.Agent{Name: "mayor", DefaultSlingFormula: stringPtr("code-review"), MaxActiveSessions: intPtr(1)}
+	result, err := s.RouteBead(context.Background(), "BL-42", a, RouteOpts{})
+	if err != nil {
+		t.Fatalf("RouteBead: %v", err)
+	}
+
+	if len(router.routed) != 2 {
+		t.Fatalf("got %d route calls, want 2", len(router.routed))
+	}
+	if router.routed[0].BeadID != "BL-42" {
+		t.Fatalf("first routed BeadID = %q, want BL-42", router.routed[0].BeadID)
+	}
+	if router.routed[1].BeadID != result.WispRootID {
+		t.Fatalf("second routed BeadID = %q, want molecule root %q", router.routed[1].BeadID, result.WispRootID)
+	}
+}
+
 // --- Missing coverage tests ---
 
 func TestSlingAttachFormula(t *testing.T) {

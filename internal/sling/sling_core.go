@@ -246,7 +246,25 @@ func slingOnFormula(opts SlingOpts, deps SlingDeps, querier BeadQuerier, beadID 
 		}
 		result.WispRootID = wispRootID
 		result.FormulaName = opts.OnFormula
-		return finalize(opts, deps, beadID, method, result)
+		sr, err := finalize(opts, deps, beadID, method, result)
+		if err != nil {
+			return sr, err
+		}
+		if wispRootID != "" && deps.Router != nil {
+			rigDir := SlingDirForBead(deps.Cfg, deps.CityPath, wispRootID)
+			slingEnv := ResolveSlingEnv(a, deps, wispRootID)
+			req := RouteRequest{
+				BeadID:  wispRootID,
+				Target:  a.QualifiedName(),
+				WorkDir: rigDir,
+				Env:     slingEnv,
+			}
+			if routeErr := deps.Router.Route(context.Background(), req); routeErr != nil {
+				sr.MetadataErrors = append(sr.MetadataErrors,
+					fmt.Sprintf("routing molecule %s: %v", wispRootID, routeErr))
+			}
+		}
+		return sr, nil
 	}
 	runGraph := func() (pendingSourceWorkflowLaunch, error) {
 		mResult, err := InstantiateSlingFormula(context.Background(), opts.OnFormula, SlingFormulaSearchPaths(deps, a), molecule.Options{
@@ -310,7 +328,25 @@ func slingDefaultFormula(opts SlingOpts, deps SlingDeps, querier BeadQuerier, be
 		}
 		result.WispRootID = wispRootID
 		result.FormulaName = defaultFormula
-		return finalize(opts, deps, beadID, method, result)
+		sr, err := finalize(opts, deps, beadID, method, result)
+		if err != nil {
+			return sr, err
+		}
+		if wispRootID != "" && deps.Router != nil {
+			rigDir := SlingDirForBead(deps.Cfg, deps.CityPath, wispRootID)
+			slingEnv := ResolveSlingEnv(a, deps, wispRootID)
+			req := RouteRequest{
+				BeadID:  wispRootID,
+				Target:  a.QualifiedName(),
+				WorkDir: rigDir,
+				Env:     slingEnv,
+			}
+			if routeErr := deps.Router.Route(context.Background(), req); routeErr != nil {
+				sr.MetadataErrors = append(sr.MetadataErrors,
+					fmt.Sprintf("routing molecule %s: %v", wispRootID, routeErr))
+			}
+		}
+		return sr, nil
 	}
 	runGraph := func() (pendingSourceWorkflowLaunch, error) {
 		mResult, err := InstantiateSlingFormula(context.Background(), defaultFormula, SlingFormulaSearchPaths(deps, a), molecule.Options{
