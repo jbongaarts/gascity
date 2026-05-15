@@ -1658,6 +1658,32 @@ func rollbackPendingCreate(session *beads.Bead, store beads.Store, now time.Time
 	closeBead(store, session.ID, string(sessionpkg.StateFailedCreate), now, stderr)
 }
 
+func rollbackPendingCreateClearingClaim(session *beads.Bead, store beads.Store, now time.Time, stderr io.Writer) {
+	if session == nil || store == nil {
+		return
+	}
+	clearPendingStartInFlightLease(session, store, stderr)
+	if strings.TrimSpace(session.Metadata["session_name_explicit"]) == "true" {
+		if setMeta(store, session.ID, "session_name", "", stderr) == nil {
+			if session.Metadata == nil {
+				session.Metadata = make(map[string]string)
+			}
+			session.Metadata["session_name"] = ""
+		}
+	}
+	if !closeFailedCreateBead(store, session.ID, now, stderr) {
+		return
+	}
+	if session.Metadata == nil {
+		session.Metadata = make(map[string]string)
+	}
+	for key, value := range sessionpkg.ClosePatch(now.UTC(), string(sessionpkg.StateFailedCreate)) {
+		session.Metadata[key] = value
+	}
+	session.Metadata["pending_create_claim"] = ""
+	session.Metadata["pending_create_started_at"] = ""
+}
+
 func executePlannedStarts(
 	ctx context.Context,
 	candidates []startCandidate,
