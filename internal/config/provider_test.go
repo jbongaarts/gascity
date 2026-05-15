@@ -145,8 +145,11 @@ func TestBuiltinProvidersCursor(t *testing.T) {
 	if p.Command != "cursor-agent" {
 		t.Errorf("Command = %q, want %q", p.Command, "cursor-agent")
 	}
-	if len(p.Args) != 1 || p.Args[0] != "-f" {
-		t.Errorf("Args = %v, want [-f]", p.Args)
+	if !reflect.DeepEqual(p.Args, []string{"-f", "--approve-mcps"}) {
+		t.Errorf("Args = %v, want [-f --approve-mcps]", p.Args)
+	}
+	if got := (&ResolvedProvider{Command: p.Command, Args: p.Args}).CommandString(); got != "cursor-agent -f --approve-mcps" {
+		t.Errorf("CommandString() = %q, want %q", got, "cursor-agent -f --approve-mcps")
 	}
 	if p.PromptMode != "arg" {
 		t.Errorf("PromptMode = %q, want %q", p.PromptMode, "arg")
