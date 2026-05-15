@@ -1430,8 +1430,8 @@ func TestSweepUndesiredPoolSessionBeads_SweepsStaleCreatingState(t *testing.T) {
 	}
 }
 
-// Stale post-creating beads (state=active, last_woke_at="",
-// creation_complete_at older than staleCreatingStateTimeout) MUST be
+// Stale post-creating beads (state=active,
+// creation_complete_at older than postCreateProtectionTimeout) MUST be
 // sweepable. Without this, the grace window would never expire.
 func TestSweepUndesiredPoolSessionBeads_SweepsLongStuckActiveWithoutWake(t *testing.T) {
 	store := beads.NewMemStore()
@@ -1447,7 +1447,7 @@ func TestSweepUndesiredPoolSessionBeads_SweepsLongStuckActiveWithoutWake(t *test
 			poolManagedMetadataKey: boolMetadata(true),
 			"state":                "active",
 			"state_reason":         "creation_complete",
-			"creation_complete_at": time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339),
+			"creation_complete_at": time.Now().Add(-3 * time.Minute).UTC().Format(time.RFC3339),
 			"continuation_epoch":   "1",
 			"generation":           "1",
 		},
@@ -1467,7 +1467,46 @@ func TestSweepUndesiredPoolSessionBeads_SweepsLongStuckActiveWithoutWake(t *test
 		false,
 	)
 	if closed != 1 {
-		t.Fatalf("closed = %d, want 1 — bead beyond staleCreatingStateTimeout must be sweepable", closed)
+		t.Fatalf("closed = %d, want 1 — bead beyond postCreateProtectionTimeout must be sweepable", closed)
+	}
+}
+
+func TestSweepUndesiredPoolSessionBeads_SkipsRecentCreationCompleteAfterWakeRecorded(t *testing.T) {
+	store := beads.NewMemStore()
+	bead, err := store.Create(beads.Bead{
+		Title:  "worker",
+		Type:   sessionBeadType,
+		Labels: []string{sessionBeadLabel, "agent:worker"},
+		Metadata: map[string]string{
+			"session_name":         "worker-bd-recent-awake",
+			"template":             "worker",
+			"agent_name":           "worker",
+			"pool_slot":            "1",
+			poolManagedMetadataKey: boolMetadata(true),
+			"state":                "awake",
+			"state_reason":         "creation_complete",
+			"creation_complete_at": time.Now().Add(-70 * time.Second).UTC().Format(time.RFC3339),
+			"last_woke_at":         time.Now().Add(-80 * time.Second).UTC().Format(time.RFC3339),
+			"continuation_epoch":   "1",
+			"generation":           "1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sessionBeads := newSessionBeadSnapshot([]beads.Bead{bead})
+
+	closed := sweepUndesiredPoolSessionBeads(
+		store,
+		nil,
+		sessionBeads,
+		nil,
+		&config.City{Agents: []config.Agent{{Name: "worker", MinActiveSessions: intPtr(0), MaxActiveSessions: intPtr(2)}}},
+		runtime.NewFake(),
+		false,
+	)
+	if closed != 0 {
+		t.Fatalf("closed = %d, want 0 — bead within postCreateProtectionTimeout must survive even after wake bookkeeping lands", closed)
 	}
 }
 

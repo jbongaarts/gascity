@@ -164,6 +164,12 @@ var (
 
 const cityRuntimeReloadLifecycleRetryLimit = 2
 
+// postCreateProtectionTimeout protects freshly-started pool beads from the
+// first steady-state sweep even after wake bookkeeping metadata lands.
+// It is intentionally longer than staleCreatingStateTimeout because startup
+// plus the first patrol can legitimately exceed one minute.
+const postCreateProtectionTimeout = 2 * time.Minute
+
 // newCityRuntime creates a CityRuntime, building internal components
 // (crash tracker, idle tracker, wisp GC, order dispatcher) from the
 // provided parameters.
@@ -1808,11 +1814,13 @@ func sweepUndesiredPoolSessionBeads(
 		// the state transition by CommitStartedPatch / ConfirmStartedPatch
 		// and restamped by recoverRunningPendingCreate on heal. A bead
 		// is protected while creation_complete_at is recent (within
-		// staleCreatingStateTimeout) AND last_woke_at is still empty —
-		// crash/churn paths do not touch creation_complete_at, so a
-		// post-crash bead whose last successful start was longer than
-		// the timeout ago is sweepable even when wake_attempts or
-		// churn_count are non-zero. The age bound mirrors
+		// postCreateProtectionTimeout). The guard intentionally ignores
+		// last_woke_at: wake bookkeeping can land before the first steady-state
+		// patrol, and a just-started bead must not become sweepable simply
+		// because that field was already populated. crash/churn paths do not
+		// touch creation_complete_at, so a post-crash bead whose last
+		// successful start was longer than the timeout ago is sweepable even
+		// when wake_attempts or churn_count are non-zero. The age bound mirrors
 		// staleCreatingState: a missing or zero creation_complete_at is
 		// treated as stale (sweepable) so beads without the per-start
 		// marker (older builds, manually repaired) stay recoverable.
@@ -1827,10 +1835,9 @@ func sweepUndesiredPoolSessionBeads(
 		// binds within a single binary (writers and sweep are the same
 		// process); the rollout needs no cross-version coordination.
 		if state := strings.TrimSpace(bead.Metadata["state"]); (state == "active" || state == "awake") &&
-			strings.TrimSpace(bead.Metadata["last_woke_at"]) == "" &&
 			strings.TrimSpace(bead.Metadata["state_reason"]) == "creation_complete" {
 			if creationCompleteAt, ok := parseRFC3339Metadata(bead.Metadata["creation_complete_at"]); ok &&
-				time.Since(creationCompleteAt) < staleCreatingStateTimeout {
+				time.Since(creationCompleteAt) < postCreateProtectionTimeout {
 				continue
 			}
 		}
