@@ -1902,6 +1902,93 @@ func TestBuildDesiredState_MinZeroDefaultScaleCheckRoutedWorkCreatesPoolSession(
 	}
 }
 
+func TestBuildDesiredState_GH1654PoolReadyWorkGrowsPastMinActiveSessions(t *testing.T) {
+	cityPath := t.TempDir()
+	store := beads.NewMemStore()
+	const template = "worker"
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name:              template,
+			StartCommand:      "true",
+			MinActiveSessions: intPtr(3),
+			MaxActiveSessions: intPtr(100),
+		}},
+	}
+	cfgAgent := &cfg.Agents[0]
+
+	for i := 0; i < 6; i++ {
+		if _, err := store.Create(beads.Bead{
+			Title:  fmt.Sprintf("queued work %d", i+1),
+			Type:   "task",
+			Status: "open",
+			Metadata: map[string]string{
+				"gc.routed_to": template,
+			},
+		}); err != nil {
+			t.Fatalf("create queued work: %v", err)
+		}
+	}
+
+	existingSessionNames := make(map[string]bool)
+	for slot := 1; slot <= 3; slot++ {
+		_, qualifiedInstance := poolInstanceIdentity(cfgAgent, slot, io.Discard)
+		session, err := createPoolSessionBead(store, cfgAgent.QualifiedName(), nil, time.Now().UTC(), poolSessionCreateIdentity{
+			AgentName: qualifiedInstance,
+			Alias:     qualifiedInstance,
+			Slot:      slot,
+		})
+		if err != nil {
+			t.Fatalf("create active pool session: %v", err)
+		}
+		if err := store.SetMetadata(session.ID, "state", "active"); err != nil {
+			t.Fatalf("set state: %v", err)
+		}
+		if err := store.SetMetadata(session.ID, "pending_create_claim", ""); err != nil {
+			t.Fatalf("clear pending_create_claim: %v", err)
+		}
+		if err := store.SetMetadata(session.ID, "pending_create_started_at", ""); err != nil {
+			t.Fatalf("clear pending_create_started_at: %v", err)
+		}
+		existingSessionNames[session.Metadata["session_name"]] = true
+	}
+
+	sessionSnapshot, err := loadSessionBeadSnapshot(store)
+	if err != nil {
+		t.Fatalf("load session snapshot: %v", err)
+	}
+	var stderr strings.Builder
+	dsResult := buildDesiredStateWithSessionBeads(
+		"test-city", cityPath, time.Now().UTC(), cfg, runtime.NewFake(),
+		store, nil, sessionSnapshot, nil, &stderr,
+	)
+
+	if got := dsResult.ScaleCheckCounts[template]; got != 6 {
+		t.Fatalf("ScaleCheckCounts[%s] = %d, want 6 queued ready beads", template, got)
+	}
+	desiredSessionNames := make(map[string]bool)
+	for _, tp := range dsResult.State {
+		if tp.TemplateName == template {
+			desiredSessionNames[tp.SessionName] = true
+		}
+	}
+	if got := len(desiredSessionNames); got != 6 {
+		t.Fatalf("%s desired sessions = %d, want 6 (3 retained min sessions + 3 new slots); stderr:\n%s", template, got, stderr.String())
+	}
+	for sessionName := range existingSessionNames {
+		if !desiredSessionNames[sessionName] {
+			t.Fatalf("existing min-floor session %s was not retained in desired state; desired=%#v", sessionName, desiredSessionNames)
+		}
+	}
+	sessions, err := store.ListByLabel(sessionBeadLabel, 0)
+	if err != nil {
+		t.Fatalf("list session beads: %v", err)
+	}
+	if len(sessions) != 6 {
+		t.Fatalf("stored session beads = %d, want 6 total after growing past min_active_sessions; stderr:\n%s", len(sessions), stderr.String())
+	}
+}
+
 func TestBuildDesiredState_MinZeroDefaultScaleCheckNoWorkDropsPendingPoolCreate(t *testing.T) {
 	cityPath := t.TempDir()
 	store := beads.NewMemStore()
