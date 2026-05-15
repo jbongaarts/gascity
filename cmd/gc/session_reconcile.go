@@ -709,6 +709,12 @@ func checkChurn(session *beads.Bead, cfg *config.City, alive bool, dt *drainTrac
 	if alive {
 		return false
 	}
+	// Pending-create sessions have not completed startup yet. A stale create
+	// lease should trigger a retried wake, not a churn increment that blocks
+	// the retry before start execution.
+	if session != nil && strings.TrimSpace(session.Metadata["pending_create_claim"]) == "true" {
+		return false
+	}
 	// Subprocess sessions exit intentionally — not churn.
 	if cfg != nil && cfg.Session.Provider == "subprocess" {
 		return false

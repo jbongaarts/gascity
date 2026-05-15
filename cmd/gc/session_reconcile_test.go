@@ -1015,6 +1015,25 @@ func TestCheckStability_PendingCreateInFlightNotCounted(t *testing.T) {
 	}
 }
 
+func TestCheckStability_PendingCreateClaimNotCountedAfterStartupLeaseExpires(t *testing.T) {
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+	store := newTestStore()
+	dt := newDrainTracker()
+	session := makeBead("b1", map[string]string{
+		"last_woke_at":         now.Add(-90 * time.Second).Format(time.RFC3339),
+		"pending_create_claim": "true",
+		"wake_attempts":        "0",
+	})
+
+	if checkStability(&session, nil, false, dt, store, clk, nil) {
+		t.Fatal("pending_create_claim should suppress stability counting until create recovery clears the claim")
+	}
+	if got := session.Metadata["wake_attempts"]; got != "0" {
+		t.Fatalf("wake_attempts = %q, want 0", got)
+	}
+}
+
 func TestCheckStability_DrainingNotCounted(t *testing.T) {
 	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
 	clk := &clock.Fake{Time: now}
@@ -2164,6 +2183,25 @@ func TestCheckChurn_RapidExitIgnored(t *testing.T) {
 
 	if checkChurn(&session, nil, false, dt, store, clk) {
 		t.Error("rapid exit should not trigger churn (handled by checkStability)")
+	}
+}
+
+func TestCheckChurn_PendingCreateClaimNotCountedAfterStartupLeaseExpires(t *testing.T) {
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+	store := newTestStore()
+	dt := newDrainTracker()
+	session := makeBead("b1", map[string]string{
+		"last_woke_at":         now.Add(-90 * time.Second).Format(time.RFC3339),
+		"pending_create_claim": "true",
+		"churn_count":          "0",
+	})
+
+	if checkChurn(&session, nil, false, dt, store, clk) {
+		t.Fatal("pending_create_claim should suppress churn counting until create recovery clears the claim")
+	}
+	if got := session.Metadata["churn_count"]; got != "0" {
+		t.Fatalf("churn_count = %q, want 0", got)
 	}
 }
 
